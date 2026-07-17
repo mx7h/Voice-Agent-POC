@@ -41,7 +41,7 @@ export interface MenuItem {
 }
 
 export interface SelectedModifier {
-  modifierOptionId: string;
+modifierOptionId: string;
   groupName: string;
   optionName: string;
   price: number;

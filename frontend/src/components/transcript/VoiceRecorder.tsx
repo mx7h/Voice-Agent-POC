@@ -1,207 +1,391 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Loader2 } from "lucide-react";
+import { Loader2, Mic, MicOff } from "lucide-react";
+import { useCartPolling } from "@/hooks/useCartPolling";
 import toast from "react-hot-toast";
-import { useAppDispatch, useAppSelector } from "@/redux/hooks";
-import { setStatus, appendEntry } from "@/redux/slices/transcriptSlice";
+
+import { useAppDispatch } from "@/redux/hooks";
+
+import { createSession, clearSession, setSessionId } from "@/redux/slices/sessionSlice";
+
+import { setCart } from "@/redux/slices/cartSlice";
+
+import { appendEntry, clearTranscript, setStatus } from "@/redux/slices/transcriptSlice";
+
 import {
+  createLocalAudioTrack,
+  LocalAudioTrack,
+  RemoteTrack,
   Room,
   RoomEvent,
-  LocalAudioTrack,
   Track,
-  RemoteTrack,
-  RemoteTrackPublication,
-  createLocalAudioTrack, // Corrected: Imported standalone function
 } from "livekit-client";
+
+type ConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting";
+
+type TranscriptMessage = {
+  role?: "user" | "assistant" | "model";
+  text?: string;
+};
+
+const LIVEKIT_TOKEN_URL = "http://localhost:5000/api/v1/livekit/token";
+
+const SESSION_URL = "http://localhost:5000/api/v1/sessions";
 
 export default function VoiceRecorder() {
   const dispatch = useAppDispatch();
-  const sessionId = useAppSelector((s) => s.session.sessionId);
-
   const [recording, setRecording] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<
-    "idle" | "connecting" | "connected" | "reconnecting"
-  >("idle");
+
+  useCartPolling(recording);
+
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
 
   const roomRef = useRef<Room | null>(null);
+
   const localAudioTrackRef = useRef<LocalAudioTrack | null>(null);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      cleanupLiveKit();
-    };
-  }, []);
+  const recordingRef = useRef(false);
+
+  const isCleaningUpRef = useRef(false);
+
+  const audioElementsRef = useRef<Map<string, HTMLMediaElement>>(new Map());
+
+  const createNewSession = async () => {
+    const response = await fetch(SESSION_URL, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to create session");
+    }
+
+    const body = await response.json();
+
+    const newSessionId = body.data?.sessionId ?? body.sessionId ?? body.data?._id;
+
+    if (!newSessionId) {
+      throw new Error("Session response missing sessionId");
+    }
+
+    return String(newSessionId);
+  };
+
+  const removeRemoteAudioElements = () => {
+    for (const audioElement of audioElementsRef.current.values()) {
+      audioElement.pause();
+      audioElement.srcObject = null;
+      audioElement.remove();
+    }
+
+    audioElementsRef.current.clear();
+  };
+
+  const resetState = () => {
+    recordingRef.current = false;
+
+    setRecording(false);
+    setConnecting(false);
+    setConnectionStatus("idle");
+
+    dispatch(setStatus("idle"));
+  };
 
   const cleanupLiveKit = async () => {
+    if (isCleaningUpRef.current) {
+      return;
+    }
+
+    isCleaningUpRef.current = true;
+
+    const room = roomRef.current;
+    const localAudioTrack = localAudioTrackRef.current;
+
+    roomRef.current = null;
+    localAudioTrackRef.current = null;
+
     try {
-      if (localAudioTrackRef.current) {
-        // Unpublish track if room is still connected
-        if (roomRef.current?.state === "connected") {
-          await roomRef.current.localParticipant.unpublishTrack(localAudioTrackRef.current);
+      if (localAudioTrack) {
+        try {
+          if (room?.state === "connected") {
+            await room.localParticipant.unpublishTrack(localAudioTrack);
+          }
+        } catch (error) {
+          console.warn("Unable to unpublish microphone:", error);
         }
-        localAudioTrackRef.current.stop();
-        localAudioTrackRef.current = null;
+
+        localAudioTrack.stop();
       }
 
-      if (roomRef.current) {
-        roomRef.current.disconnect();
-        roomRef.current = null;
+      removeRemoteAudioElements();
+
+      if (room) {
+        room.removeAllListeners();
+
+        if (room.state !== "disconnected") {
+          await room.disconnect(true);
+        }
       }
     } catch (error) {
-      console.error("Cleanup error:", error);
+      console.error("LiveKit cleanup error:", error);
     } finally {
-      setConnectionStatus("idle");
-      setRecording(false);
-      dispatch(setStatus("idle"));
+      resetState();
+
+      dispatch(clearSession());
+      dispatch(setCart(null));
+      dispatch(clearTranscript());
+
+      isCleaningUpRef.current = false;
+    }
+  };
+
+  const handleRemoteAudioTrack = (track: RemoteTrack) => {
+    if (track.kind !== Track.Kind.Audio) {
+      return;
+    }
+
+    const existingElement = audioElementsRef.current.get(track.sid as string);
+
+    if (existingElement) {
+      return;
+    }
+
+    const audioElement = track.attach();
+
+    audioElement.autoplay = true;
+    audioElement.controls = false;
+    audioElement.setAttribute("playsinline", "true");
+
+    document.body.appendChild(audioElement);
+
+    audioElementsRef.current.set(track.sid as string, audioElement);
+
+    void audioElement.play().catch((error) => {
+      console.warn("Remote audio autoplay was blocked:", error);
+    });
+  };
+
+  const handleRemoteAudioTrackRemoved = (track: RemoteTrack) => {
+    const audioElement = audioElementsRef.current.get(track.sid as string);
+
+    if (!audioElement) {
+      return;
+    }
+
+    track.detach(audioElement);
+
+    audioElement.pause();
+    audioElement.srcObject = null;
+    audioElement.remove();
+
+    audioElementsRef.current.delete(track.sid as string);
+  };
+
+  const handleDataReceived = (payload: Uint8Array) => {
+    try {
+      const messageString = new TextDecoder().decode(payload);
+
+      const data = JSON.parse(messageString) as TranscriptMessage;
+
+      const transcriptText = data.text?.trim();
+
+      if (!transcriptText) {
+        return;
+      }
+
+      const role: "user" | "assistant" = data.role === "user" ? "user" : "assistant";
+
+      dispatch(
+        appendEntry({
+          role,
+          text: transcriptText,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+    } catch (error) {
+      console.warn("Received an invalid LiveKit data message:", error);
     }
   };
 
   const start = async () => {
-    if (!sessionId) {
-      toast.error("Session not initialized");
+    if (connecting) {
       return;
     }
 
     try {
+      await cleanupLiveKit();
+
       setConnecting(true);
       setConnectionStatus("connecting");
+
       dispatch(setStatus("processing"));
 
-      // 1. Fetch LiveKit token from backend
-      const tokenResponse = await fetch(`http://localhost:5000/api/v1/livekit/token/${sessionId}`);
+      const newSessionId = await createNewSession();
+
+      dispatch(setSessionId(newSessionId));
+
+      const tokenResponse = await fetch(`${LIVEKIT_TOKEN_URL}/${newSessionId}`);
+
       if (!tokenResponse.ok) {
-        throw new Error("Failed to retrieve LiveKit token from server");
+        const errorBody = await tokenResponse.json().catch(() => null);
+
+        throw new Error(errorBody?.message ?? "Failed to retrieve the LiveKit token");
       }
 
-      const { data } = await tokenResponse.json();
-      const { token, url } = data;
+      const responseBody = await tokenResponse.json();
 
-      // 2. Initialize LiveKit Room
+      const token = responseBody.data?.token ?? responseBody.token;
+
+      const url = responseBody.data?.url ?? responseBody.url;
+
+      if (!token || !url) {
+        throw new Error("LiveKit token response is incomplete");
+      }
+
       const room = new Room({
         adaptiveStream: true,
         dynacast: true,
       });
+
       roomRef.current = room;
 
-      // 3. Set up lifecycle event listeners
       room.on(RoomEvent.Connected, () => {
-        setConnectionStatus("connected");
-        dispatch(setStatus("listening"));
+        recordingRef.current = true;
+
         setRecording(true);
         setConnecting(false);
-        toast.success("Connected to LiveKit session");
+        setConnectionStatus("connected");
+
+        dispatch(setStatus("listening"));
+
+        toast.success("Connected to voice agent");
       });
 
       room.on(RoomEvent.Reconnecting, () => {
         setConnectionStatus("reconnecting");
+
         dispatch(setStatus("processing"));
-        toast.loading("Reconnecting to audio stream...", { id: "lk-reconnect" });
+
+        toast.loading("Reconnecting...", {
+          id: "livekit-reconnect",
+        });
       });
 
       room.on(RoomEvent.Reconnected, () => {
+        recordingRef.current = true;
+
+        setRecording(true);
+        setConnecting(false);
         setConnectionStatus("connected");
+
         dispatch(setStatus("listening"));
-        toast.dismiss("lk-reconnect");
-        toast.success("Reconnected successfully");
+
+        toast.dismiss("livekit-reconnect");
+        toast.success("Reconnected");
+      });
+
+      room.on(RoomEvent.TrackSubscribed, (track) => {
+        handleRemoteAudioTrack(track);
+      });
+
+      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        handleRemoteAudioTrackRemoved(track);
+      });
+
+      room.on(RoomEvent.DataReceived, (payload) => {
+        handleDataReceived(payload);
       });
 
       room.on(RoomEvent.Disconnected, () => {
-        toast.dismiss("lk-reconnect");
-        if (recording) {
-          toast.error("LiveKit connection lost");
-        }
-        cleanupLiveKit();
-      });
+        toast.dismiss("livekit-reconnect");
 
-      // 4. Handle Incoming AI Audio Tracks (Gemini Voice Playback)
-      room.on(
-        RoomEvent.TrackSubscribed,
-        (track: RemoteTrack, publication: RemoteTrackPublication) => {
-          if (track.kind === Track.Kind.Audio) {
-            // Attach the remote audio track dynamically to the DOM for audio playback
-            const audioElement = track.attach();
-            document.body.appendChild(audioElement);
+        const wasRecording = recordingRef.current;
 
-            // Corrected: Manage unsubscriptions dynamically via the room instance
-            room.on(RoomEvent.TrackUnsubscribed, (unsubscribedTrack) => {
-              if (unsubscribedTrack.sid === track.sid) {
-                track.detach(audioElement);
-                audioElement.remove();
-              }
-            });
-          }
-        },
-      );
+        recordingRef.current = false;
 
-      // 5. Handle Text Data Messages (Gemini Live Real-time Transcripts)
-      room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant) => {
-        try {
-          const textDecoder = new TextDecoder();
-          const messageString = textDecoder.decode(payload);
-          const data = JSON.parse(messageString);
+        localAudioTrackRef.current?.stop();
+        localAudioTrackRef.current = null;
 
-          if (data && data.text) {
-            dispatch(
-              appendEntry({
-                role: data.role || "model",
-                text: data.text.trim(),
-                timestamp: new Date().toISOString(),
-              }),
-            );
-          }
-        } catch (e) {
-          console.error("Failed to parse data message from stream:", e);
+        removeRemoteAudioElements();
+
+        roomRef.current = null;
+
+        resetState();
+
+        dispatch(clearSession());
+        dispatch(setCart(null));
+        dispatch(clearTranscript());
+
+        if (wasRecording && !isCleaningUpRef.current) {
+          toast.error("Voice session disconnected");
         }
       });
 
-      // 6. Connect to LiveKit Server
       await room.connect(url, token);
 
-      // 7. Corrected: Request Mic Access using standalone createLocalAudioTrack
-      const localAudioTrack = await createLocalAudioTrack({
+      const microphoneTrack = await createLocalAudioTrack({
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
       });
-      localAudioTrackRef.current = localAudioTrack;
 
-      await room.localParticipant.publishTrack(localAudioTrack, {
+      localAudioTrackRef.current = microphoneTrack;
+
+      await room.localParticipant.publishTrack(microphoneTrack, {
         name: "microphone",
+        source: Track.Source.Microphone,
       });
     } catch (error) {
-      setConnecting(false);
-      cleanupLiveKit();
+      console.error("LiveKit stream start error:", error);
+
+      await cleanupLiveKit();
+
       const message =
         error instanceof Error ? error.message : "Microphone or connection access denied";
+
       toast.error(message);
-      console.error("LiveKit Stream Start Error:", error);
     }
   };
 
   const stop = async () => {
     await cleanupLiveKit();
-    toast.success("Disconnected streaming");
+
+    toast.success("Voice session ended");
   };
 
+  useEffect(() => {
+    return () => {
+      void cleanupLiveKit();
+    };
+  }, []);
+
   const getStatusText = () => {
-    if (connecting) return "Connecting to stream...";
-    if (connectionStatus === "reconnecting") return "Signal weak, reconnecting...";
-    if (recording) return "Gemini is listening... Tap to stop";
-    return "Tap to talk to Gemini";
+    if (connecting) {
+      return "Connecting to voice agent...";
+    }
+
+    if (connectionStatus === "reconnecting") {
+      return "Connection interrupted. Reconnecting...";
+    }
+
+    if (recording) {
+      return "Voice agent is listening... Tap to stop";
+    }
+
+    return "Tap to talk to voice agent";
   };
 
   return (
     <div className="flex flex-col items-center gap-2">
       <button
+        type="button"
         onClick={recording ? stop : start}
         disabled={connecting || connectionStatus === "reconnecting"}
         className={`inline-flex h-16 w-16 items-center justify-center rounded-full transition ${
           recording
-            ? "bg-red-500 text-white animate-pulse"
+            ? "animate-pulse bg-red-500 text-white"
             : "bg-primary text-primary-foreground hover:opacity-90"
-        } disabled:opacity-40`}
-        aria-label={recording ? "Stop stream" : "Start stream"}
+        } disabled:cursor-not-allowed disabled:opacity-40`}
+        aria-label={recording ? "Stop voice session" : "Start voice session"}
       >
         {connecting ? (
           <Loader2 className="h-6 w-6 animate-spin" />
@@ -211,7 +395,8 @@ export default function VoiceRecorder() {
           <Mic className="h-6 w-6" />
         )}
       </button>
-      <p className="text-xs text-muted-foreground select-none">{getStatusText()}</p>
+
+      <p className="select-none text-xs text-muted-foreground">{getStatusText()}</p>
     </div>
   );
 }

@@ -37,17 +37,38 @@ export class CartService {
             selectedModifiers
         );
 
-        const cartItem = {
-            cartItemId: randomUUID(),
-            menuId: menuItem._id,
-            itemName: menuItem.name,
-            quantity,
-            basePrice: menuItem.basePrice,
-            selectedModifiers,
-            totalPrice: itemPrice * quantity,
-        };
+        // Check if the same menu item with the same modifiers already exists
+        const existingItem = session.cart.items.find((item: any) => {
+            if (item.menuId.toString() !== menuId.toString()) {
+                return false;
+            }
 
-        session.cart.items.push(cartItem);
+            if (item.selectedModifiers.length !== selectedModifiers.length) {
+                return false;
+            }
+
+            return item.selectedModifiers.every(
+                (modifier: any, index: number) =>
+                    modifier.name === selectedModifiers[index].name
+            );
+        });
+
+        if (existingItem) {
+            existingItem.quantity += quantity;
+            existingItem.totalPrice = itemPrice * existingItem.quantity;
+        } else {
+            const cartItem = {
+                cartItemId: randomUUID(),
+                menuId: menuItem._id,
+                itemName: menuItem.name,
+                quantity,
+                basePrice: menuItem.basePrice,
+                selectedModifiers,
+                totalPrice: itemPrice * quantity,
+            };
+
+            session.cart.items.push(cartItem);
+        }
 
         this.calculateCart(session.cart);
 
@@ -55,8 +76,11 @@ export class CartService {
             cart: session.cart,
         });
 
-        emitCartUpdated(sessionId, session.cart);
-
+        // emitCartUpdated(sessionId, session.cart);
+        console.log("[AI CART UPDATED]", {
+            sessionId,
+            cart: session.cart,
+        });
         return session.cart;
     }
 

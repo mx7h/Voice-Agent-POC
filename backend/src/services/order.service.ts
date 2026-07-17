@@ -93,8 +93,8 @@ export class OrderService {
 
     console.log("Emitting cart:", emptyCart);
 
-    emitCartUpdated(sessionId, emptyCart);
-    emitOrderPlaced(sessionId, order);
+    // emitCartUpdated(sessionId, emptyCart);
+    // emitOrderPlaced(sessionId, order);
 
 
     return order;

@@ -4,6 +4,11 @@ export const emitCartUpdated = (
   sessionId: string,
   cart: unknown
 ) => {
+  const roomSize = getIO().sockets.adapter.rooms.get(sessionId)?.size ?? 0;
+  console.log("[SOCKET EMIT] cart:updated", {
+    sessionId,
+    roomSize,
+  });
   getIO().to(sessionId).emit("cart:updated", cart);
 };
 

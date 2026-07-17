@@ -15,9 +15,7 @@ import {
 
 // Generate a random 24-char hex string that passes Mongoose ObjectId validation
 const generateObjectId = () => {
-  return Array.from({ length: 24 }, () =>
-    Math.floor(Math.random() * 16).toString(16)
-  ).join("");
+  return Array.from({ length: 24 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
 };
 
 interface ModifierGroupProps {
@@ -28,12 +26,7 @@ interface ModifierGroupProps {
   subSelections: SelectedModifier[];
 }
 
-function ModifierGroupSelector({
-  group,
-  selections,
-  onToggle,
-  subSelections,
-}: ModifierGroupProps) {
+function ModifierGroupSelector({ group, selections, onToggle, subSelections }: ModifierGroupProps) {
   const selectedOptions = selections.filter((s) => s.groupName === group.name);
   const minSel = group.minSelection ?? (group.required ? 1 : 0);
   const maxSel = group.maxSelection ?? (group.multiple ? Infinity : 1);
@@ -44,7 +37,9 @@ function ModifierGroupSelector({
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-foreground">
           {group.name}
-          {group.required && <span className="ml-1 text-xs text-red-500 font-normal">(Required)</span>}
+          {group.required && (
+            <span className="ml-1 text-xs text-red-500 font-normal">(Required)</span>
+          )}
         </p>
         <span className="text-[11px] text-muted-foreground">
           {minSel === maxSel ? `Select ${minSel}` : `Select up to ${maxSel}`}
@@ -62,7 +57,9 @@ function ModifierGroupSelector({
               if (maxSel === 1 && selectedOptions.length > 0) {
                 // Auto deselect the other selected option for single-select radio-like groups
                 const previousSelectedOptionName = selectedOptions[0].optionName;
-                const previousOption = group.options.find(o => o.name === previousSelectedOptionName);
+                const previousOption = group.options.find(
+                  (o) => o.name === previousSelectedOptionName,
+                );
                 if (previousOption) {
                   onToggle(previousOption, group, false);
                 }
@@ -129,11 +126,7 @@ export default function MenuItemCard({ item }: { item: MenuItem }) {
 
   const hasModifiers = item.modifierGroups && item.modifierGroups.length > 0;
 
-  const handleToggleOption = (
-    option: ModifierOption,
-    group: ModifierGroup,
-    checked: boolean
-  ) => {
+  const handleToggleOption = (option: ModifierOption, group: ModifierGroup, checked: boolean) => {
     if (checked) {
       // Add the selection
       const newSelection: SelectedModifier = {
@@ -210,7 +203,7 @@ export default function MenuItemCard({ item }: { item: MenuItem }) {
           menuId: item._id,
           quantity: 1,
           selectedModifiers: selections,
-        })
+        }),
       ).unwrap();
       toast.success(`${item.name} added`);
       setDialogOpen(false);
@@ -239,7 +232,9 @@ export default function MenuItemCard({ item }: { item: MenuItem }) {
           )}
           <p className="mt-1 text-sm font-semibold">
             {formatCurrency(item.basePrice)}
-            {hasModifiers && <span className="ml-1 text-xs font-normal text-muted-foreground">(Customizable)</span>}
+            {hasModifiers && (
+              <span className="ml-1 text-xs font-normal text-muted-foreground">(Customizable)</span>
+            )}
           </p>
         </div>
         <button
@@ -273,7 +268,9 @@ export default function MenuItemCard({ item }: { item: MenuItem }) {
 
             <DialogFooter className="p-4 border-t border-border bg-muted/20 flex items-center justify-between gap-4">
               <div className="text-left">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total Price</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                  Total Price
+                </p>
                 <p className="text-base font-bold text-foreground">{formatCurrency(totalPrice)}</p>
               </div>
               <button
@@ -290,4 +287,3 @@ export default function MenuItemCard({ item }: { item: MenuItem }) {
     </>
   );
 }
-
