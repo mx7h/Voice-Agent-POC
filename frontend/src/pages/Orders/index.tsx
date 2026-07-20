@@ -24,16 +24,12 @@ export default function OrdersHistoryPage() {
     dispatch(fetchOrders());
   }, [dispatch]);
 
-
-
   return (
     <div className="mx-auto max-w-4xl space-y-4 p-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Orders History</h1>
-          <p className="text-xs text-muted-foreground">
-            Past orders for this session
-          </p>
+          <p className="text-xs text-muted-foreground">Past orders for this session</p>
         </div>
         <button
           onClick={() => dispatch(fetchOrders())}
@@ -44,9 +40,7 @@ export default function OrdersHistoryPage() {
       </div>
 
       {loading && <Loading />}
-      {error && !loading && (
-        <EmptyState title="Could not load orders" description={error} />
-      )}
+      {error && !loading && <EmptyState title="Could not load orders" description={error} />}
       {!loading && !error && list.length === 0 && (
         <EmptyState title="No past orders yet" description="Placed orders will appear here." />
       )}

@@ -24,6 +24,11 @@ export function useCartPolling(enabled: boolean) {
 
     stopPolling();
 
+    console.log("[CART POLLING STATE]", {
+      enabled,
+      sessionId,
+    });
+
     if (!enabled || !sessionId) {
       dispatch(setCart(null));
       return stopPolling;
@@ -37,7 +42,11 @@ export function useCartPolling(enabled: boolean) {
       try {
         inFlightRef.current = true;
 
+        console.log("[CART POLLING FETCH]", sessionId);
+
         const cart = await cartApi.get(sessionId);
+
+        console.log("[CART POLLING RESULT]", cart);
 
         if (active) {
           dispatch(setCart(cart));

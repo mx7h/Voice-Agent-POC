@@ -11,6 +11,8 @@ import { RESTAURANT_AGENT_INSTRUCTIONS } from "./prompts.js";
 import { AgentFunctions } from "./functions.js";
 import { createAgentTools } from "./tools.js";
 
+import { analyticsService } from "../services/index.js";
+
 export default defineAgent({
     entry: async (ctx) => {
         /**
@@ -19,18 +21,19 @@ export default defineAgent({
          */
         await connectDB();
 
-
         const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
         const groqApiKey = process.env.GROQ_API_KEY;
 
         if (!groqApiKey) {
             throw new Error("GROQ_API_KEY is missing in .env");
         }
+
         if (!deepgramApiKey) {
             throw new Error(
                 "DEEPGRAM_API_KEY is missing. Add it to backend/.env",
             );
         }
+
         if (!redisClient.isOpen) {
             await redisClient.connect();
         }
@@ -46,9 +49,7 @@ export default defineAgent({
 
         const participant = await ctx.waitForParticipant();
 
-        console.log(
-            `Participant joined: ${participant.identity}`,
-        );
+        console.log(`Participant joined: ${participant.identity}`);
 
         /**
          * Your LiveKit room name is the Redis session ID.
@@ -62,6 +63,18 @@ export default defineAgent({
         }
 
         /**
+         * Ensure analytics session exists.
+         */
+        try {
+            await analyticsService.startSession(sessionId);
+        } catch (error) {
+            console.warn("[ANALYTICS START ERROR]", {
+                sessionId,
+                error,
+            });
+        }
+
+        /**
          * Create business function wrapper for this call.
          */
         const functions = new AgentFunctions({
@@ -71,8 +84,7 @@ export default defineAgent({
         /**
          * Load restaurant name for the greeting.
          */
-        const restaurantResult =
-            await functions.getRestaurant();
+        const restaurantResult = await functions.getRestaurant();
 
         const restaurant = restaurantResult.data as
             | {
@@ -80,8 +92,7 @@ export default defineAgent({
             }
             | undefined;
 
-        const restaurantName =
-            restaurant?.name ?? "the restaurant";
+        const restaurantName = restaurant?.name ?? "the restaurant";
 
         /**
          * Register tools.
@@ -104,6 +115,8 @@ Session ID: ${sessionId}
 IMPORTANT:
 - Never tell the customer the session ID.
 - Never mention internal tools, MongoDB, Redis, APIs, LiveKit, or Gemini.
+- Never output function tags like <function=...>.
+- Never output raw JSON.
 - Always use menu tools before talking about menu items, prices, availability, or modifiers.
 - If the customer wants to add an item, call getMenuItem first.
 - If an item has required modifiers, ask the customer to choose them before calling addToCart.
@@ -114,8 +127,6 @@ IMPORTANT:
 
         /**
          * STT → LLM → TTS pipeline.
-         *
-         * This replaces Gemini Live RealtimeModel.
          */
         const agentSession = new voice.AgentSession({
             stt: new deepgram.STT({
@@ -135,12 +146,61 @@ IMPORTANT:
                 model: "aura-2-asteria-en",
             }),
 
-            userAwayTimeout: 6 * 60 * 1000,
+            userAwayTimeout: 5 * 60 * 1000,
         });
+
+        /**
+         * Real LiveKit/Groq token + LLM latency tracking.
+         */
+        agentSession.on(
+            voice.AgentSessionEventTypes.SessionUsageUpdated,
+            async (event: any) => {
+                try {
+                    const modelUsage = event?.usage?.modelUsage ?? [];
+
+                    for (const usage of modelUsage) {
+                        if (usage.type !== "llm_usage") continue;
+
+                        const promptTokens = Number(usage.inputTokens ?? 0);
+                        const completionTokens = Number(usage.outputTokens ?? 0);
+                        const totalTokens = promptTokens + completionTokens;
+
+                        if (totalTokens <= 0) continue;
+
+                        console.log("[LIVEKIT TOKEN SAVE]", {
+                            sessionId,
+                            promptTokens,
+                            completionTokens,
+                            totalTokens,
+                        });
+
+                        await analyticsService.recordTokenUsage(sessionId, {
+                            provider: usage.provider,
+                            model: usage.model,
+                            promptTokens,
+                            completionTokens,
+                            totalTokens,
+                            cachedPromptTokens: 0,
+                            durationMs: 0,
+                            ttftMs: 0,
+                        });
+                    }
+                } catch (error) {
+                    console.warn("[LIVEKIT USAGE ANALYTICS ERROR]", {
+                        sessionId,
+                        error,
+                    });
+                }
+            },
+        );
 
         await agentSession.start({
             agent,
             room: ctx.room,
+            outputOptions: {
+                transcriptionEnabled: true,
+                syncTranscription: false,
+            },
         });
 
         console.log(

@@ -8,7 +8,7 @@ import AnalyticsPanel from "@/components/analytics/AnalyticsPanel";
 
 export default function Home() {
   return (
-    <div className="mx-auto grid max-w-7xl grid-cols-1 gap-4 p-4 lg:grid-cols-12">
+    <div className="mx-auto grid max-w-7xl grid-cols-1 gap-3 p-2 lg:grid-cols-12">
       {/* Left */}
       <section className="space-y-4 lg:col-span-4">
         <RestaurantInfo />
@@ -34,10 +34,10 @@ export default function Home() {
       {/* Right */}
       <section className="space-y-4 lg:col-span-3">
         <CartPanel />
-        <div>
+        {/* <div>
           <h3 className="mb-2 px-1 text-sm font-semibold text-muted-foreground">Analytics</h3>
           <AnalyticsPanel />
-        </div>
+        </div> */}
       </section>
     </div>
   );

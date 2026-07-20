@@ -1,0 +1,193 @@
+classDiagram
+class Restaurant {
++ObjectId _id
++String name
++String phone
++String address
++Boolean isOpen
++String openingTime
++String closingTime
++Date createdAt
++Date updatedAt
+}
+
+class Menu {
++ObjectId _id
++ObjectId restaurantId
++String name
++String description
++Number basePrice
++String category
++Boolean isAvailable
++ModifierGroup[] modifierGroups
++Date createdAt
++Date updatedAt
+}
+
+class ModifierGroup {
++String groupName
++Boolean required
++Number minSelections
++Number maxSelections
++ModifierOption[] options
+}
+
+class ModifierOption {
++ObjectId _id
++String name
++Number price
++Boolean isAvailable
+}
+
+class Session {
++String sessionId
++ObjectId restaurantId
++String currentState
++Customer customer
++Cart cart
++Date startedAt
++Date updatedAt
+}
+
+class Customer {
++String name
++String phone
++String email
+}
+
+class Cart {
++CartItem[] items
++Number subtotal
++Number tax
++Number total
+}
+
+class CartItem {
++String cartItemId
++ObjectId menuId
++String itemName
++Number quantity
++Number basePrice
++SelectedModifier[] selectedModifiers
++Number totalPrice
+}
+
+class SelectedModifier {
++ObjectId modifierOptionId
++String groupName
++String optionName
++Number price
+}
+
+class Order {
++ObjectId _id
++String sessionId
++String orderNumber
++String customerName
++String customerPhone
++String customerEmail
++OrderItem[] items
++Number subtotal
++Number tax
++Number discount
++Number total
++String orderStatus
++Boolean confirmationSent
++Boolean smsSent
++Boolean emailSent
++Date createdAt
++Date updatedAt
+}
+
+class OrderItem {
++ObjectId menuId
++String itemName
++Number quantity
++Number basePrice
++SelectedModifier[] selectedModifiers
++Number totalPrice
+}
+
+class CallLog {
++ObjectId _id
++String sessionId
++ObjectId restaurantId
++String callStatus
++Transcript[] transcripts
++Date startedAt
++Date endedAt
++Number durationSeconds
++Date createdAt
++Date updatedAt
+}
+
+class Transcript {
++String role
++String text
++Date createdAt
+}
+
+class Analytics {
++ObjectId _id
++String sessionId
++ObjectId orderId
++String status
++Date callStartedAt
++Date callEndedAt
++Number durationSeconds
++Number totalTurns
++Number userTurns
++Number assistantTurns
++Number promptTokens
++Number completionTokens
++Number totalTokens
++Number cachedPromptTokens
++Number toolCalls
++Number cartUpdates
++Number firstResponseLatency
++Number averageLatency
++Number totalLatency
++Number llmDurationMs
++Number llmTtftMs
++Boolean orderPlaced
++ToolEvent[] toolEvents
++ErrorEvent[] errors
++Date lastEventAt
++Date createdAt
++Date updatedAt
+}
+
+class ToolEvent {
++String toolName
++Number latencyMs
++Boolean success
++Date createdAt
+}
+
+class ErrorEvent {
++String message
++Date createdAt
+}
+
+Restaurant "1" --> "_" Menu : has
+Restaurant "1" --> "_" Session : serves
+Restaurant "1" --> "*" CallLog : logs
+
+Menu "1" --> "_" ModifierGroup : contains
+ModifierGroup "1" --> "_" ModifierOption : contains
+
+Session "1" --> "1" Cart : has
+Session "1" --> "1" Customer : has
+Cart "1" --> "_" CartItem : contains
+CartItem "_" --> "1" Menu : references
+CartItem "1" --> "*" SelectedModifier : has
+
+Order "1" --> "_" OrderItem : contains
+OrderItem "_" --> "1" Menu : references
+OrderItem "1" --> "*" SelectedModifier : has
+
+CallLog "1" --> "*" Transcript : contains
+
+Analytics "1" --> "_" ToolEvent : tracks
+Analytics "1" --> "_" ErrorEvent : tracks
+Analytics "*" --> "1" Order : references

@@ -1,24 +1,25 @@
 import { Types } from "mongoose";
+
 import {
+    analyticsService,
     cartService,
     menuService,
     orderService,
     restaurantService,
     sessionService,
 } from "../services/index.js";
-import { ApiError } from "../utils/ApiError.js";
 
 export interface SelectedModifier {
-
     groupName: string;
     name: string;
     modifierOptionId?: string;
     optionName?: string;
+    price?: number;
 }
 
 export interface AddToCartInput {
     menuId: string;
-    quantity: number;
+    quantity: number | string;
     selectedModifiers?: SelectedModifier[];
 }
 
@@ -37,14 +38,15 @@ export interface AgentFunctionResult<T = unknown> {
 }
 
 export class AgentFunctions {
-    constructor(
-        private readonly context: AgentFunctionContext,
-    ) { }
+    constructor(private readonly context: AgentFunctionContext) { }
+
+    private get sessionId() {
+        return this.context.sessionId;
+    }
 
     async getRestaurant(): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
-            const restaurant =
-                await restaurantService.getRestaurant();
+        return this.executeSafely("getRestaurant", async () => {
+            const restaurant = await restaurantService.getRestaurant();
 
             return {
                 success: true,
@@ -61,9 +63,8 @@ export class AgentFunctions {
     }
 
     async listMenu(): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
-            const items =
-                await menuService.getAvailableItems();
+        return this.executeSafely("listMenu", async () => {
+            const items = await menuService.getAvailableItems();
 
             return {
                 success: true,
@@ -72,20 +73,15 @@ export class AgentFunctions {
                         ? `${items.length} menu items are available.`
                         : "No menu items are currently available.",
                 data: {
-                    items: items.map((item: any) =>
-                        this.formatMenuSummary(item),
-                    ),
+                    items: items.map((item: any) => this.formatMenuSummary(item)),
                 },
             };
         });
     }
 
-    async getMenuItem(
-        menuId: string,
-    ): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
-            const item =
-                await menuService.getMenuById(menuId);
+    async getMenuItem(menuId: string): Promise<AgentFunctionResult> {
+        return this.executeSafely("getMenuItem", async () => {
+            const item = await menuService.getMenuById(menuId);
 
             return {
                 success: true,
@@ -95,54 +91,9 @@ export class AgentFunctions {
         });
     }
 
-    // async searchMenu(
-    //     query: string,
-    // ): Promise<AgentFunctionResult> {
-    //     return this.executeSafely(async () => {
-    //         const items =
-    //             await menuService.searchMenu(query);
-
-    //         return {
-    //             success: true,
-    //             message:
-    //                 items.length > 0
-    //                     ? `${items.length} matching items found.`
-    //                     : "No matching menu items were found.",
-    //             data: {
-    //                 items: items.map((item: any) =>
-    //                     this.formatMenuSummary(item),
-    //                 ),
-    //             },
-    //         };
-    //     });
-    // }
-
-    // async getMenuByCategory(
-    //     category: string,
-    // ): Promise<AgentFunctionResult> {
-    //     return this.executeSafely(async () => {
-    //         const items =
-    //             await menuService.getMenuByCategory(
-    //                 category,
-    //             );
-
-    //         return {
-    //             success: true,
-    //             message: `${items.length} items found in ${category}.`,
-    //             data: {
-    //                 items: items.map((item: any) =>
-    //                     this.formatMenuSummary(item),
-    //                 ),
-    //             },
-    //         };
-    //     });
-    // }
-
     async getCart(): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
-            const cart = await cartService.getCart(
-                this.context.sessionId,
-            );
+        return this.executeSafely("getCart", async () => {
+            const cart = await cartService.getCart(this.sessionId);
 
             if (!cart.items.length) {
                 return {
@@ -165,27 +116,18 @@ export class AgentFunctions {
         });
     }
 
-    async addToCart(
-        input: AddToCartInput,
-    ): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
-            const quantity = input.quantity ?? 1;
+    async addToCart(input: AddToCartInput): Promise<AgentFunctionResult> {
+        return this.executeSafely("addToCart", async () => {
+            const quantity = Number(input.quantity ?? 1);
 
-            if (
-                !Number.isInteger(quantity) ||
-                quantity <= 0
-            ) {
+            if (!Number.isInteger(quantity) || quantity <= 0) {
                 return {
                     success: false,
-                    message:
-                        "Quantity must be a positive whole number.",
+                    message: "Quantity must be a positive whole number.",
                 };
             }
 
-            const menuItem =
-                await menuService.getMenuById(
-                    input.menuId,
-                );
+            const menuItem = await menuService.getMenuById(input.menuId);
 
             if (menuItem.available !== true) {
                 return {
@@ -194,32 +136,22 @@ export class AgentFunctions {
                 };
             }
 
-            const requestedModifiers =
-                input.selectedModifiers ?? [];
+            const requestedModifiers = input.selectedModifiers ?? [];
 
-            const missingRequiredGroups = (
-                menuItem.modifierGroups ?? []
-            ).filter((group: any) => {
-                if (group.required !== true) {
-                    return false;
-                }
+            const missingRequiredGroups = (menuItem.modifierGroups ?? []).filter(
+                (group: any) => {
+                    if (group.required !== true) return false;
 
-                const selectionsForGroup =
-                    requestedModifiers.filter(
+                    const selectionsForGroup = requestedModifiers.filter(
                         (modifier) =>
-                            this.normalize(modifier.groupName) ===
-                            this.normalize(group.name),
+                            this.normalize(modifier.groupName) === this.normalize(group.name),
                     );
 
-                const minSelection = Number(
-                    group.minSelection ?? 1,
-                );
+                    const minSelection = Number(group.minSelection ?? 1);
 
-                return (
-                    selectionsForGroup.length <
-                    minSelection
-                );
-            });
+                    return selectionsForGroup.length < minSelection;
+                },
+            );
 
             if (missingRequiredGroups.length > 0) {
                 return {
@@ -228,91 +160,59 @@ export class AgentFunctions {
                         "Ask the customer to select the required options before adding this item.",
                     data: {
                         requiresCustomerInput: true,
-                        missingModifierGroups:
-                            missingRequiredGroups.map(
-                                (group: any) => ({
-                                    groupName: String(group.name),
-                                    required: true,
-                                    multiple: Boolean(group.multiple),
-                                    minSelection: Number(
-                                        group.minSelection ?? 1,
-                                    ),
-                                    maxSelection: Number(
-                                        group.maxSelection ?? 1,
-                                    ),
-                                    choices: (
-                                        group.options ?? []
-                                    )
-                                        .filter(
-                                            (option: any) =>
-                                                option.available !== false,
-                                        )
-                                        .map((option: any) => ({
-                                            name: String(option.name),
-                                            additionalPrice: Number(
-                                                option.price ?? 0,
-                                            ),
-                                        })),
-                                }),
-                            ),
+                        missingModifierGroups: missingRequiredGroups.map((group: any) => ({
+                            groupName: String(group.name),
+                            required: true,
+                            multiple: Boolean(group.multiple),
+                            minSelection: Number(group.minSelection ?? 1),
+                            maxSelection: Number(group.maxSelection ?? 1),
+                            choices: (group.options ?? [])
+                                .filter((option: any) => option.available !== false)
+                                .map((option: any) => ({
+                                    name: String(option.name),
+                                    additionalPrice: Number(option.price ?? 0),
+                                })),
+                        })),
                     },
                 };
             }
 
-            const resolvedModifiers =
-                requestedModifiers.map(
-                    (selectedModifier) => {
-                        const modifierGroup =
-                            menuItem.modifierGroups?.find(
-                                (group: any) =>
-                                    this.normalize(group.name) ===
-                                    this.normalize(
-                                        selectedModifier.groupName,
-                                    ),
-                            );
-
-                        if (!modifierGroup) {
-                            throw new Error(
-                                `Modifier group "${selectedModifier.groupName}" is not available for ${menuItem.name}.`,
-                            );
-                        }
-
-                        const modifierOption =
-                            modifierGroup.options?.find(
-                                (option: any) =>
-                                    option.available !== false &&
-                                    this.normalize(option.name) ===
-                                    this.normalize(
-                                        selectedModifier.name,
-                                    ),
-                            );
-
-                        if (!modifierOption) {
-                            throw new Error(
-                                `"${selectedModifier.name}" is not a valid option for ${modifierGroup.name}.`,
-                            );
-                        }
-
-
-                        return {
-                            modifierOptionId: String(
-                                modifierOption._id ?? new Types.ObjectId(),
-                            ),
-
-                            groupName: String(modifierGroup.name),
-
-                            optionName: String(modifierOption.name),
-
-                            // keep name also because your cart/format logic uses name
-                            name: String(modifierOption.name),
-
-                            price: Number(modifierOption.price ?? 0),
-                        };
-                    },
+            const resolvedModifiers = requestedModifiers.map((selectedModifier) => {
+                const modifierGroup = menuItem.modifierGroups?.find(
+                    (group: any) =>
+                        this.normalize(group.name) ===
+                        this.normalize(selectedModifier.groupName),
                 );
 
+                if (!modifierGroup) {
+                    throw new Error(
+                        `Modifier group "${selectedModifier.groupName}" is not available for ${menuItem.name}.`,
+                    );
+                }
+
+                const modifierOption = modifierGroup.options?.find(
+                    (option: any) =>
+                        option.available !== false &&
+                        this.normalize(option.name) === this.normalize(selectedModifier.name),
+                );
+
+                if (!modifierOption) {
+                    throw new Error(
+                        `"${selectedModifier.name}" is not a valid option for ${modifierGroup.name}.`,
+                    );
+                }
+
+                return {
+                    modifierOptionId: String(modifierOption._id ?? new Types.ObjectId()),
+                    groupName: String(modifierGroup.name),
+                    optionName: String(modifierOption.name),
+                    name: String(modifierOption.name),
+                    price: Number(modifierOption.price ?? 0),
+                };
+            });
+
             const cart = await cartService.addToCart(
-                this.context.sessionId,
+                this.sessionId,
                 input.menuId,
                 quantity,
                 resolvedModifiers,
@@ -325,14 +225,13 @@ export class AgentFunctions {
                     addedItem: {
                         name: menuItem.name,
                         quantity,
-                        modifiers: resolvedModifiers.map(
-                            (modifier) => ({
-                                groupName: modifier.groupName,
-                                name: modifier.name,
-                                optionName: modifier.optionName,
-                                modifierOptionId: modifier.modifierOptionId,
-                            }),
-                        ),
+                        modifiers: resolvedModifiers.map((modifier) => ({
+                            groupName: modifier.groupName,
+                            name: modifier.name,
+                            optionName: modifier.optionName,
+                            modifierOptionId: modifier.modifierOptionId,
+                            price: modifier.price,
+                        })),
                     },
                     cart: this.formatCart(cart),
                 },
@@ -340,34 +239,22 @@ export class AgentFunctions {
         });
     }
 
-    async removeFromCart(
-        cartItemId: string,
-    ): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
-            const currentCart =
-                await cartService.getCart(
-                    this.context.sessionId,
-                );
+    async removeFromCart(cartItemId: string): Promise<AgentFunctionResult> {
+        return this.executeSafely("removeFromCart", async () => {
+            const currentCart = await cartService.getCart(this.sessionId);
 
-            const existingItem =
-                currentCart.items.find(
-                    (item: any) =>
-                        item.cartItemId === cartItemId,
-                );
+            const existingItem = currentCart.items.find(
+                (item: any) => item.cartItemId === cartItemId,
+            );
 
             if (!existingItem) {
                 return {
                     success: false,
-                    message:
-                        "That item was not found in the cart.",
+                    message: "That item was not found in the cart.",
                 };
             }
 
-            const cart =
-                await cartService.removeFromCart(
-                    this.context.sessionId,
-                    cartItemId,
-                );
+            const cart = await cartService.removeFromCart(this.sessionId, cartItemId);
 
             return {
                 success: true,
@@ -378,11 +265,8 @@ export class AgentFunctions {
     }
 
     async clearCart(): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
-            const cart =
-                await cartService.clearCart(
-                    this.context.sessionId,
-                );
+        return this.executeSafely("clearCart", async () => {
+            const cart = await cartService.clearCart(this.sessionId);
 
             return {
                 success: true,
@@ -392,32 +276,8 @@ export class AgentFunctions {
         });
     }
 
-    async setCustomerDetails(): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
-            const customer = {
-                name: "Mohit",
-                phone: "1234567890",
-                email: "mohit@example.com",
-            };
-
-            await sessionService.updateSession(
-                this.context.sessionId,
-                {
-                    customer,
-                },
-            );
-
-            return {
-                success: true,
-                message: "Customer details saved.",
-            };
-        });
-    }
-
-    async placeOrder(
-        input: PlaceOrderInput,
-    ): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
+    async placeOrder(input: PlaceOrderInput): Promise<AgentFunctionResult> {
+        return this.executeSafely("placeOrder", async () => {
             if (input.confirmed !== true) {
                 return {
                     success: false,
@@ -426,26 +286,20 @@ export class AgentFunctions {
                 };
             }
 
-            const cart = await cartService.getCart(
-                this.context.sessionId,
-            );
+            const cart = await cartService.getCart(this.sessionId);
 
             if (!cart.items.length) {
                 return {
                     success: false,
-                    message:
-                        "The cart is empty. Add an item before placing the order.",
+                    message: "The cart is empty. Add an item before placing the order.",
                 };
             }
 
             await restaurantService.checkRestaurantOpen();
 
-            await this.setCustomerDetails();
+            await this.saveCustomerDetails();
 
-            const order =
-                await orderService.placeOrder(
-                    this.context.sessionId,
-                );
+            const order = await orderService.placeOrder(this.sessionId);
 
             return {
                 success: true,
@@ -461,15 +315,25 @@ export class AgentFunctions {
     }
 
     async endSession(): Promise<AgentFunctionResult> {
-        return this.executeSafely(async () => {
-            await sessionService.closeSession(
-                this.context.sessionId,
-            );
+        return this.executeSafely("endSession", async () => {
+            await sessionService.closeSession(this.sessionId);
 
             return {
                 success: true,
                 message: "The ordering session was closed.",
             };
+        });
+    }
+
+    private async saveCustomerDetails() {
+        const customer = {
+            name: "Mohit",
+            phone: "1234567890",
+            email: "mohit@example.com",
+        };
+
+        await sessionService.updateSession(this.sessionId, {
+            customer,
         });
     }
 
@@ -491,40 +355,20 @@ export class AgentFunctions {
             category: String(item.category),
             price: Number(item.basePrice),
             available: item.available === true,
-
-            hasRequiredModifiers: (
-                item.modifierGroups ?? []
-            ).some(
-                (group: any) =>
-                    group.required === true,
+            hasRequiredModifiers: (item.modifierGroups ?? []).some(
+                (group: any) => group.required === true,
             ),
-
-            modifierGroups: (
-                item.modifierGroups ?? []
-            ).map((group: any) => ({
+            modifierGroups: (item.modifierGroups ?? []).map((group: any) => ({
                 groupName: String(group.name),
                 required: group.required === true,
                 multiple: group.multiple === true,
-                minSelection: Number(
-                    group.minSelection ??
-                    (group.required ? 1 : 0),
-                ),
-                maxSelection: Number(
-                    group.maxSelection ?? 1,
-                ),
-
-                choices: (
-                    group.options ?? []
-                )
-                    .filter(
-                        (option: any) =>
-                            option.available !== false,
-                    )
+                minSelection: Number(group.minSelection ?? (group.required ? 1 : 0)),
+                maxSelection: Number(group.maxSelection ?? 1),
+                choices: (group.options ?? [])
+                    .filter((option: any) => option.available !== false)
                     .map((option: any) => ({
                         name: String(option.name),
-                        additionalPrice: Number(
-                            option.price ?? 0,
-                        ),
+                        additionalPrice: Number(option.price ?? 0),
                     })),
             })),
         };
@@ -532,27 +376,18 @@ export class AgentFunctions {
 
     private formatCart(cart: any) {
         return {
-            items: (cart.items ?? []).map(
-                (item: any) => ({
-                    cartItemId: String(
-                        item.cartItemId,
-                    ),
-                    name: String(item.itemName),
-                    quantity: Number(item.quantity),
-                    modifiers: (
-                        item.selectedModifiers ?? []
-                    ).map((modifier: any) => ({
-                        groupName: String(
-                            modifier.groupName,
-                        ),
-                        name: String(modifier.name),
-                    })),
-                    totalPrice: Number(
-                        item.totalPrice,
-                    ),
-                }),
-            ),
-
+            items: (cart.items ?? []).map((item: any) => ({
+                cartItemId: String(item.cartItemId),
+                name: String(item.itemName),
+                quantity: Number(item.quantity),
+                modifiers: (item.selectedModifiers ?? []).map((modifier: any) => ({
+                    groupName: String(modifier.groupName),
+                    name: String(modifier.name ?? modifier.optionName),
+                    optionName: String(modifier.optionName ?? modifier.name),
+                    price: Number(modifier.price ?? 0),
+                })),
+                totalPrice: Number(item.totalPrice),
+            })),
             subtotal: Number(cart.subtotal ?? 0),
             tax: Number(cart.tax ?? 0),
             total: Number(cart.total ?? 0),
@@ -560,40 +395,65 @@ export class AgentFunctions {
     }
 
     private normalize(value: unknown) {
-        return String(value)
-            .trim()
-            .toLowerCase();
+        return String(value).trim().toLowerCase();
     }
 
     private async executeSafely(
+        toolName: string,
         action: () => Promise<AgentFunctionResult>,
     ): Promise<AgentFunctionResult> {
+        const startedAt = Date.now();
+
         try {
-            return await action();
-        } catch (error: unknown) {
-            if (error instanceof ApiError) {
-                console.error("[AGENT API ERROR]", error.message);
+            const result = await action();
+            const latencyMs = Date.now() - startedAt;
 
-                return {
-                    success: false,
-                    message: error.message,
-                };
+            try {
+                await analyticsService.recordToolCall(
+                    this.sessionId,
+                    toolName,
+                    latencyMs,
+                    result.success,
+                );
+            } catch (analyticsError) {
+                console.warn("[ANALYTICS TOOL ERROR]", {
+                    toolName,
+                    analyticsError,
+                });
             }
 
-            if (error instanceof Error) {
-                console.error("[AGENT ERROR]", error.message);
+            return result;
+        } catch (error) {
+            const latencyMs = Date.now() - startedAt;
 
-                return {
-                    success: false,
-                    message: error.message,
-                };
+            try {
+                await analyticsService.recordToolCall(
+                    this.sessionId,
+                    toolName,
+                    latencyMs,
+                    false,
+                );
+
+                await analyticsService.recordError(
+                    this.sessionId,
+                    error instanceof Error ? error.message : "Unknown tool error",
+                );
+            } catch (analyticsError) {
+                console.warn("[ANALYTICS ERROR RECORD ERROR]", {
+                    toolName,
+                    analyticsError,
+                });
             }
 
-            console.error("[AGENT UNKNOWN ERROR]", error);
+            console.error("[AGENT TOOL ERROR]", {
+                toolName,
+                error,
+            });
 
             return {
                 success: false,
-                message: "The requested action could not be completed.",
+                message:
+                    error instanceof Error ? error.message : "Something went wrong",
             };
         }
     }

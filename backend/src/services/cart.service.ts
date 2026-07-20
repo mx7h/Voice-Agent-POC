@@ -1,8 +1,13 @@
 import { StatusCodes } from "http-status-codes";
 import { randomUUID } from "crypto";
-import { menuService, sessionService } from "./index.js";
+
+import {
+    analyticsService,
+    menuService,
+    sessionService,
+} from "./index.js";
+
 import { ApiError } from "../utils/ApiError.js";
-import { emitCartUpdated } from "../socket/socket.events.js";
 
 export class CartService {
     /**
@@ -21,7 +26,7 @@ export class CartService {
         sessionId: string,
         menuId: string,
         quantity: number,
-        selectedModifiers: any[]
+        selectedModifiers: any[],
     ) {
         const session = await sessionService.getSession(sessionId);
 
@@ -29,27 +34,39 @@ export class CartService {
 
         menuService.validateRequiredModifiers(
             menuItem,
-            selectedModifiers
+            selectedModifiers,
         );
 
         const itemPrice = menuService.calculateItemPrice(
             menuItem,
-            selectedModifiers
+            selectedModifiers,
         );
 
-        // Check if the same menu item with the same modifiers already exists
         const existingItem = session.cart.items.find((item: any) => {
             if (item.menuId.toString() !== menuId.toString()) {
                 return false;
             }
 
-            if (item.selectedModifiers.length !== selectedModifiers.length) {
+            if (
+                item.selectedModifiers.length !== selectedModifiers.length
+            ) {
                 return false;
             }
 
             return item.selectedModifiers.every(
-                (modifier: any, index: number) =>
-                    modifier.name === selectedModifiers[index].name
+                (modifier: any, index: number) => {
+                    const selectedModifier = selectedModifiers[index];
+
+                    return (
+                        this.normalize(modifier.groupName) ===
+                        this.normalize(selectedModifier.groupName) &&
+                        this.normalize(modifier.name ?? modifier.optionName) ===
+                        this.normalize(
+                            selectedModifier.name ??
+                            selectedModifier.optionName,
+                        )
+                    );
+                },
             );
         });
 
@@ -76,11 +93,13 @@ export class CartService {
             cart: session.cart,
         });
 
-        // emitCartUpdated(sessionId, session.cart);
+        await this.recordCartUpdateAnalytics(sessionId);
+
         console.log("[AI CART UPDATED]", {
             sessionId,
             cart: session.cart,
         });
+
         return session.cart;
     }
 
@@ -91,13 +110,13 @@ export class CartService {
         const session = await sessionService.getSession(sessionId);
 
         const index = session.cart.items.findIndex(
-            (item: any) => item.cartItemId === cartItemId
+            (item: any) => item.cartItemId === cartItemId,
         );
 
         if (index < 0 || index >= session.cart.items.length) {
             throw new ApiError(
                 StatusCodes.BAD_REQUEST,
-                "Invalid cart item index"
+                "Invalid cart item index",
             );
         }
 
@@ -109,7 +128,12 @@ export class CartService {
             cart: session.cart,
         });
 
-        emitCartUpdated(sessionId, session.cart);
+        await this.recordCartUpdateAnalytics(sessionId);
+
+        console.log("[CART ITEM REMOVED]", {
+            sessionId,
+            cart: session.cart,
+        });
 
         return session.cart;
     }
@@ -131,9 +155,28 @@ export class CartService {
             cart: session.cart,
         });
 
-        emitCartUpdated(sessionId, session.cart);
+        await this.recordCartUpdateAnalytics(sessionId);
+
+        console.log("[CART CLEARED]", {
+            sessionId,
+            cart: session.cart,
+        });
 
         return session.cart;
+    }
+
+    /**
+     * Record analytics without breaking cart flow
+     */
+    private async recordCartUpdateAnalytics(sessionId: string) {
+        try {
+            await analyticsService.recordCartUpdate(sessionId);
+        } catch (error) {
+            console.warn("[ANALYTICS CART ERROR]", {
+                sessionId,
+                error,
+            });
+        }
     }
 
     /**
@@ -141,12 +184,19 @@ export class CartService {
      */
     private calculateCart(cart: any) {
         cart.subtotal = cart.items.reduce(
-            (sum: number, item: any) => sum + item.totalPrice,
-            0
+            (sum: number, item: any) =>
+                sum + Number(item.totalPrice ?? 0),
+            0,
         );
 
         cart.tax = Number((cart.subtotal * 0.05).toFixed(2));
 
-        cart.total = cart.subtotal + cart.tax;
+        cart.total = Number((cart.subtotal + cart.tax).toFixed(2));
+    }
+
+    private normalize(value: unknown) {
+        return String(value ?? "")
+            .trim()
+            .toLowerCase();
     }
 }

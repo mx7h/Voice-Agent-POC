@@ -5,6 +5,7 @@ const analyticsSchema = new Schema(
     sessionId: {
       type: String,
       required: true,
+      unique: true,
       index: true,
     },
 
@@ -15,7 +16,41 @@ const analyticsSchema = new Schema(
       index: true,
     },
 
+    status: {
+      type: String,
+      enum: ["active", "completed", "failed"],
+      default: "active",
+    },
+
+    callStartedAt: {
+      type: Date,
+      default: Date.now,
+    },
+
+    callEndedAt: {
+      type: Date,
+      default: null,
+    },
+
+    durationSeconds: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     totalTurns: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    userTurns: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    assistantTurns: {
       type: Number,
       default: 0,
       min: 0,
@@ -39,31 +74,73 @@ const analyticsSchema = new Schema(
       min: 0,
     },
 
+    cachedPromptTokens: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    /**
+     * Latest LLM response duration from LiveKit/Groq
+     */
+    llmDurationMs: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    /**
+     * Latest TTFT from LiveKit/Groq
+     */
+    llmTtftMs: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    /**
+     * Average LLM duration across usage events
+     */
+    llmAverageDurationMs: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     toolCalls: {
       type: Number,
       default: 0,
       min: 0,
     },
 
+    cartUpdates: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    /**
+     * We map LiveKit ttftMs here
+     */
     firstResponseLatency: {
       type: Number,
       default: 0,
       min: 0,
     },
 
+    /**
+     * Average backend tool latency
+     */
     averageLatency: {
       type: Number,
       default: 0,
       min: 0,
     },
 
+    /**
+     * Total backend tool latency
+     */
     totalLatency: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
-    totalDuration: {
       type: Number,
       default: 0,
       min: 0,
@@ -73,15 +150,50 @@ const analyticsSchema = new Schema(
       type: Boolean,
       default: false,
     },
+
+    toolEvents: [
+      {
+        toolName: String,
+
+        latencyMs: {
+          type: Number,
+          default: 0,
+        },
+
+        success: {
+          type: Boolean,
+          default: true,
+        },
+
+        createdAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+
+
+
+    errors: [
+      {
+        message: String,
+
+        createdAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
+
+    lastEventAt: {
+      type: Date,
+      default: Date.now,
+    },
   },
   {
     timestamps: true,
-  }
+  },
 );
-
-analyticsSchema.index({ sessionId: 1 });
-
-analyticsSchema.index({ orderId: 1 });
 
 analyticsSchema.index({ createdAt: -1 });
 

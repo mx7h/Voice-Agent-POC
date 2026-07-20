@@ -1,16 +1,22 @@
 import { Router } from "express";
 
-import { analyticsController } from "../controllers/analytics.controller.js";
+import {
+  endAnalyticsController,
+  getAllAnalyticsController,
+  getAnalyticsSummaryController,
+  getSessionAnalyticsController,
+  recordTurnController,
+  startAnalyticsController,
+} from "../controllers/analytics.controller.js";
 
 const router = Router();
 
-// GET /api/v1/analytics
-router.get("/", analyticsController.getAllAnalytics);
+router.get("/summary", getAnalyticsSummaryController);
+router.get("/sessions", getAllAnalyticsController);
+router.get("/:sessionId", getSessionAnalyticsController);
 
-// GET /api/v1/analytics/:sessionId
-router.get("/:sessionId", analyticsController.getAnalytics);
-
-// PATCH /api/v1/analytics/:sessionId
-router.patch("/:sessionId", analyticsController.updateAnalytics);
+router.post("/:sessionId/start", startAnalyticsController);
+router.post("/:sessionId/turn", recordTurnController);
+router.post("/:sessionId/end", endAnalyticsController);
 
 export default router;

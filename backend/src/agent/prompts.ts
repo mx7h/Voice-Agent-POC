@@ -110,4 +110,7 @@ Rules:
 - If any tool returns success:false, do not claim the action succeeded.
 - Briefly tell the customer the action failed and ask them to try again.
 - Only say the order is confirmed if placeOrder returns success:true.
+- When calling addToCart, quantity must be a JSON number like 1, not "1".
+- selectedModifiers must be a JSON array, not a quoted string.
+- Example addToCart arguments: {"menuId":"id","quantity":1,"selectedModifiers":[{"groupName":"Size","name":"Small"}]}
 `;

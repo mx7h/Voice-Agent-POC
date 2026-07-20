@@ -1,16 +1,10 @@
 import { randomUUID } from "crypto";
 import { StatusCodes } from "http-status-codes";
-import {
-  emitOrderPlaced,
-  emitCartUpdated,
-} from "../socket/socket.events.js";
 
+import { orderRepository } from "../repositories/index.js";
 
 import {
-  orderRepository,
-} from "../repositories/index.js";
-
-import {
+  analyticsService,
   restaurantService,
   sessionService,
 } from "./index.js";
@@ -32,17 +26,21 @@ export class OrderService {
     if (!session.cart.items.length) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
-        "Cart is empty"
+        "Cart is empty",
       );
     }
 
     // Validate customer
-    const { name, phone, email } = { name: "Mohit", phone: "1234567890", email: "mohit@example.com" };
+    const { name, phone, email } = {
+      name: "Mohit",
+      phone: "1234567890",
+      email: "mohit@example.com",
+    };
 
     if (!name || !phone || !email) {
       throw new ApiError(
         StatusCodes.BAD_REQUEST,
-        "Customer details are incomplete"
+        "Customer details are incomplete",
       );
     }
 
@@ -72,11 +70,15 @@ export class OrderService {
       orderStatus: "confirmed",
     });
 
+    await this.recordOrderPlacedAnalytics(
+      sessionId,
+      order._id.toString(),
+    );
+
     // TODO
     // await emailService.sendOrderConfirmation(order);
     // await smsService.sendConfirmation(order);
     // await callLogService.completeCall(...)
-    // await analyticsService.saveAnalytics(...)
 
     // Clear cart
     const emptyCart = {
@@ -91,11 +93,21 @@ export class OrderService {
       currentState: "order_placed",
     });
 
-    console.log("Emitting cart:", emptyCart);
+    console.log("[ORDER PLACED]", {
+      sessionId,
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      total: order.total,
+    });
 
+    console.log("[ORDER CART CLEARED]", {
+      sessionId,
+      cart: emptyCart,
+    });
+
+    // Socket disabled because frontend uses polling
     // emitCartUpdated(sessionId, emptyCart);
     // emitOrderPlaced(sessionId, order);
-
 
     return order;
   }
@@ -109,7 +121,7 @@ export class OrderService {
     if (!order) {
       throw new ApiError(
         StatusCodes.NOT_FOUND,
-        "Order not found"
+        "Order not found",
       );
     }
 
@@ -133,17 +145,17 @@ export class OrderService {
       | "confirmed"
       | "preparing"
       | "completed"
-      | "cancelled"
+      | "cancelled",
   ) {
     const order = await orderRepository.updateOrderStatus(
       orderId,
-      status
+      status,
     );
 
     if (!order) {
       throw new ApiError(
         StatusCodes.NOT_FOUND,
-        "Order not found"
+        "Order not found",
       );
     }
 
@@ -151,9 +163,37 @@ export class OrderService {
   }
 
   /**
+   * Record order analytics without breaking order flow
+   */
+  private async recordOrderPlacedAnalytics(
+    sessionId: string,
+    orderId: string,
+  ) {
+    try {
+      await analyticsService.recordOrderPlaced(
+        sessionId,
+        orderId,
+      );
+
+      console.log("[ANALYTICS ORDER PLACED]", {
+        sessionId,
+        orderId,
+      });
+    } catch (error) {
+      console.warn("[ANALYTICS ORDER ERROR]", {
+        sessionId,
+        orderId,
+        error,
+      });
+    }
+  }
+
+  /**
    * Generate order number
    */
   private generateOrderNumber() {
-    return `ORD-${Date.now()}-${randomUUID().slice(0, 6).toUpperCase()}`;
+    return `ORD-${Date.now()}-${randomUUID()
+      .slice(0, 6)
+      .toUpperCase()}`;
   }
 }

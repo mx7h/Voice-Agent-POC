@@ -1,59 +1,96 @@
 import type { Request, Response } from "express";
-import asyncHandler from "express-async-handler";
 import { StatusCodes } from "http-status-codes";
 
 import { analyticsService } from "../services/index.js";
 
-export class AnalyticsController {
-  /**
-   * GET /api/v1/analytics
-   */
-  getAllAnalytics = asyncHandler(
-    async (_req: Request, res: Response) => {
-      const analytics = await analyticsService.getAllAnalytics();
+export const startAnalyticsController = async (
+  req: Request,
+  res: Response,
+) => {
+  const { sessionId } = req.params;
 
-      res.status(StatusCodes.OK).json({
-        success: true,
-        message: "Analytics fetched successfully",
-        data: analytics,
-      });
-    }
+  const analytics = await analyticsService.startSession(sessionId as string);
+
+  res.status(StatusCodes.OK).json({
+    success: true,
+    data: analytics,
+  });
+};
+
+export const recordTurnController = async (
+  req: Request,
+  res: Response,
+) => {
+  const { sessionId } = req.params;
+  const { role } = req.body;
+
+  if (role !== "user" && role !== "assistant") {
+    return res.status(StatusCodes.BAD_REQUEST).json({
+      success: false,
+      message: "role must be user or assistant",
+    });
+  }
+
+  const analytics = await analyticsService.recordTurn(sessionId as string, role);
+
+  res.status(StatusCodes.OK).json({
+    success: true,
+    data: analytics,
+  });
+};
+
+export const endAnalyticsController = async (
+  req: Request,
+  res: Response,
+) => {
+  const { sessionId } = req.params;
+  const { status } = req.body;
+
+  const analytics = await analyticsService.endSession(
+    sessionId as string,
+    status === "failed" ? "failed" : "completed",
   );
 
-  /**
-   * GET /api/v1/analytics/:sessionId
-   */
-  getAnalytics = asyncHandler(
-    async (req: Request, res: Response) => {
-      const analytics = await analyticsService.getAnalytics(
-        req.params.sessionId as string
-      );
+  res.status(StatusCodes.OK).json({
+    success: true,
+    data: analytics,
+  });
+};
 
-      res.status(StatusCodes.OK).json({
-        success: true,
-        message: "Analytics fetched successfully",
-        data: analytics,
-      });
-    }
-  );
+export const getAnalyticsSummaryController = async (
+  _req: Request,
+  res: Response,
+) => {
+  const summary = await analyticsService.getSummary();
 
-  /**
-   * PATCH /api/v1/analytics/:sessionId
-   */
-  updateAnalytics = asyncHandler(
-    async (req: Request, res: Response) => {
-      const analytics = await analyticsService.updateAnalytics(
-        req.params.sessionId as string,
-        req.body
-      );
+  res.status(StatusCodes.OK).json({
+    success: true,
+    data: summary,
+  });
+};
 
-      res.status(StatusCodes.OK).json({
-        success: true,
-        message: "Analytics updated successfully",
-        data: analytics,
-      });
-    }
-  );
-}
+export const getAllAnalyticsController = async (
+  _req: Request,
+  res: Response,
+) => {
+  const analytics = await analyticsService.getAllAnalytics();
 
-export const analyticsController = new AnalyticsController();
+  res.status(StatusCodes.OK).json({
+    success: true,
+    data: analytics,
+  });
+};
+
+export const getSessionAnalyticsController = async (
+  req: Request,
+  res: Response,
+) => {
+  const { sessionId } = req.params;
+
+  const analytics = await analyticsService.getAnalytics(sessionId as string);
+
+  res.status(StatusCodes.OK).json({
+    success: true,
+    data: analytics,
+  });
+};
