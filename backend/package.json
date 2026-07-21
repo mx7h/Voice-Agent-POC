@@ -10,8 +10,9 @@
     "dev:all": "concurrently \"npm run dev\" \"npm run agent:dev\"",
     "seed": "tsx --env-file=.env src/scripts/seed.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
-    "agent:start": "node dist/agent/index.js start",
+    "server:start": "node dist/server.js",
+    "agent:start": "node --max-old-space-size=2048 dist/agent/index.js start",
+    "start": "npm run agent:start",
     "start:all": "concurrently \"npm run start\" \"npm run agent:start\"",
     "lint": "eslint .",
     "format": "prettier --write ."
