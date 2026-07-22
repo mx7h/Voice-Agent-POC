@@ -377,7 +377,7 @@ export class AgentFunctions {
         };
     }
     private formatMoney(value: unknown) {
-        return Number((Number(value ?? 0) / 100).toFixed(2));
+        return Number((Number(value ?? 0)));
     }
     private formatMenuItem(item: any) {
         return {

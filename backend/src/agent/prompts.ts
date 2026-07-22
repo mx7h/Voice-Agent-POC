@@ -26,6 +26,7 @@ Modifiers:
 - If the customer gives an invalid option, ask again using valid choices.
 
 Cart:
+- Prices are stored in rupees. If price is 399, say ₹399, not ₹3.99 or $3.99.
 - addToCart quantity must be a number.
 - selectedModifiers must be an array.
 - Use getCart before summarizing cart or confirming order.
