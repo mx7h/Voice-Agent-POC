@@ -1,5 +1,3 @@
-
-
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Mic, MicOff } from "lucide-react";
 import toast from "react-hot-toast";
@@ -8,16 +6,9 @@ import { useCartPolling } from "@/hooks/useCartPolling";
 import { analyticsApi } from "@/api/analytics.api";
 
 import { useAppDispatch } from "@/redux/hooks";
-import {
-  clearSession,
-  setSessionId,
-} from "@/redux/slices/sessionSlice";
+import { clearSession, setSessionId } from "@/redux/slices/sessionSlice";
 import { setCart } from "@/redux/slices/cartSlice";
-import {
-  appendEntry,
-  clearTranscript,
-  setStatus,
-} from "@/redux/slices/transcriptSlice";
+import { appendEntry, clearTranscript, setStatus } from "@/redux/slices/transcriptSlice";
 
 import {
   createLocalAudioTrack,
@@ -28,11 +19,7 @@ import {
   Track,
 } from "livekit-client";
 
-type ConnectionStatus =
-  | "idle"
-  | "connecting"
-  | "connected"
-  | "reconnecting";
+type ConnectionStatus = "idle" | "connecting" | "connected" | "reconnecting";
 
 type TranscriptMessage = {
   role?: "user" | "assistant" | "model";
@@ -41,8 +28,7 @@ type TranscriptMessage = {
 
 type AnalyticsEndStatus = "completed" | "failed";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:5000/api/v1";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api/v1";
 
 const LIVEKIT_TOKEN_URL = `${API_BASE_URL}/livekit/token`;
 const SESSION_URL = `${API_BASE_URL}/sessions`;
@@ -53,18 +39,16 @@ export default function VoiceRecorder() {
   const [recording, setRecording] = useState(false);
   const [connecting, setConnecting] = useState(false);
 
-  useCartPolling(recording);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
-  const [connectionStatus, setConnectionStatus] =
-    useState<ConnectionStatus>("idle");
+  useCartPolling(recording, activeSessionId);
+
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("idle");
 
   const roomRef = useRef<Room | null>(null);
-  const localAudioTrackRef =
-    useRef<LocalAudioTrack | null>(null);
+  const localAudioTrackRef = useRef<LocalAudioTrack | null>(null);
 
-  const transcriptSegmentIdsRef = useRef<Set<string>>(
-    new Set(),
-  );
+  const transcriptSegmentIdsRef = useRef<Set<string>>(new Set());
 
   const recordingRef = useRef(false);
   const isCleaningUpRef = useRef(false);
@@ -72,9 +56,7 @@ export default function VoiceRecorder() {
   const sessionIdRef = useRef<string | null>(null);
   const analyticsEndedRef = useRef(false);
 
-  const audioElementsRef = useRef<
-    Map<string, HTMLMediaElement>
-  >(new Map());
+  const audioElementsRef = useRef<Map<string, HTMLMediaElement>>(new Map());
 
   const createNewSession = async () => {
     const response = await fetch(SESSION_URL, {
@@ -87,8 +69,7 @@ export default function VoiceRecorder() {
 
     const body = await response.json();
 
-    const newSessionId =
-      body.data?.sessionId ?? body.sessionId ?? body.data?._id;
+    const newSessionId = body.data?.sessionId ?? body.sessionId ?? body.data?._id;
 
     if (!newSessionId) {
       throw new Error("Session response missing sessionId");
@@ -97,9 +78,7 @@ export default function VoiceRecorder() {
     return String(newSessionId);
   };
 
-  const endAnalyticsOnce = async (
-    status: AnalyticsEndStatus = "completed",
-  ) => {
+  const endAnalyticsOnce = async (status: AnalyticsEndStatus = "completed") => {
     const currentSessionId = sessionIdRef.current;
 
     if (!currentSessionId || analyticsEndedRef.current) {
@@ -115,26 +94,19 @@ export default function VoiceRecorder() {
     }
   };
 
-  const recordAnalyticsTurn = (
-    role: "user" | "assistant",
-  ) => {
+  const recordAnalyticsTurn = (role: "user" | "assistant") => {
     const currentSessionId = sessionIdRef.current;
 
     if (!currentSessionId) {
       return;
     }
 
-    void analyticsApi
-      .recordTurn(currentSessionId, role)
-      .catch((error) => {
-        console.warn("[ANALYTICS TURN ERROR]", error);
-      });
+    void analyticsApi.recordTurn(currentSessionId, role).catch((error) => {
+      console.warn("[ANALYTICS TURN ERROR]", error);
+    });
   };
 
-  const appendTranscript = (
-    role: "user" | "assistant",
-    text: string,
-  ) => {
+  const appendTranscript = (role: "user" | "assistant", text: string) => {
     const transcriptText = text.trim();
 
     if (!transcriptText) {
@@ -172,9 +144,7 @@ export default function VoiceRecorder() {
     dispatch(setStatus("idle"));
   };
 
-  const cleanupLiveKit = async (
-    analyticsStatus: AnalyticsEndStatus = "completed",
-  ) => {
+  const cleanupLiveKit = async (analyticsStatus: AnalyticsEndStatus = "completed") => {
     if (isCleaningUpRef.current) {
       return;
     }
@@ -191,15 +161,10 @@ export default function VoiceRecorder() {
       if (localAudioTrack) {
         try {
           if (room?.state === "connected") {
-            await room.localParticipant.unpublishTrack(
-              localAudioTrack,
-            );
+            await room.localParticipant.unpublishTrack(localAudioTrack);
           }
         } catch (error) {
-          console.warn(
-            "Unable to unpublish microphone:",
-            error,
-          );
+          console.warn("Unable to unpublish microphone:", error);
         }
 
         localAudioTrack.stop();
@@ -223,6 +188,7 @@ export default function VoiceRecorder() {
 
       sessionIdRef.current = null;
       transcriptSegmentIdsRef.current.clear();
+      setActiveSessionId(null);
 
       dispatch(clearSession());
       dispatch(setCart(null));
@@ -236,9 +202,7 @@ export default function VoiceRecorder() {
       return;
     }
 
-    const existingElement = audioElementsRef.current.get(
-      track.sid as string,
-    );
+    const existingElement = audioElementsRef.current.get(track.sid as string);
 
     if (existingElement) {
       return;
@@ -252,25 +216,15 @@ export default function VoiceRecorder() {
 
     document.body.appendChild(audioElement);
 
-    audioElementsRef.current.set(
-      track.sid as string,
-      audioElement,
-    );
+    audioElementsRef.current.set(track.sid as string, audioElement);
 
     void audioElement.play().catch((error) => {
-      console.warn(
-        "Remote audio autoplay was blocked:",
-        error,
-      );
+      console.warn("Remote audio autoplay was blocked:", error);
     });
   };
 
-  const handleRemoteAudioTrackRemoved = (
-    track: RemoteTrack,
-  ) => {
-    const audioElement = audioElementsRef.current.get(
-      track.sid as string,
-    );
+  const handleRemoteAudioTrackRemoved = (track: RemoteTrack) => {
+    const audioElement = audioElementsRef.current.get(track.sid as string);
 
     if (!audioElement) {
       return;
@@ -289,9 +243,7 @@ export default function VoiceRecorder() {
     try {
       const messageString = new TextDecoder().decode(payload);
 
-      const data = JSON.parse(
-        messageString,
-      ) as TranscriptMessage;
+      const data = JSON.parse(messageString) as TranscriptMessage;
 
       const transcriptText = data.text?.trim();
 
@@ -299,15 +251,11 @@ export default function VoiceRecorder() {
         return;
       }
 
-      const role: "user" | "assistant" =
-        data.role === "user" ? "user" : "assistant";
+      const role: "user" | "assistant" = data.role === "user" ? "user" : "assistant";
 
       appendTranscript(role, transcriptText);
     } catch (error) {
-      console.warn(
-        "Received an invalid LiveKit data message:",
-        error,
-      );
+      console.warn("Received an invalid LiveKit data message:", error);
     }
   };
 
@@ -315,10 +263,7 @@ export default function VoiceRecorder() {
     const textRoom = room as Room & {
       registerTextStreamHandler?: (
         topic: string,
-        handler: (
-          reader: any,
-          participantInfo: { identity: string },
-        ) => Promise<void>,
+        handler: (reader: any, participantInfo: { identity: string }) => Promise<void>,
       ) => void;
     };
 
@@ -329,64 +274,52 @@ export default function VoiceRecorder() {
       return;
     }
 
-    textRoom.registerTextStreamHandler(
-      "lk.transcription",
-      async (reader, participantInfo) => {
-        try {
-          const rawText = await reader.readAll();
-          const text = String(rawText).trim();
+    textRoom.registerTextStreamHandler("lk.transcription", async (reader, participantInfo) => {
+      try {
+        const rawText = await reader.readAll();
+        const text = String(rawText).trim();
 
-          if (!text) {
-            return;
-          }
-
-          const attributes = reader.info?.attributes ?? {};
-
-          const isUser =
-            participantInfo.identity ===
-            room.localParticipant.identity;
-
-          const role: "user" | "assistant" = isUser
-            ? "user"
-            : "assistant";
-
-          const isFinal =
-            attributes["lk.transcription_final"] === "true"
-
-          if (role === "user" && !isFinal) {
-            return;
-          }
-
-          const segmentId =
-            attributes["lk.segment_id"] ??
-            reader.info?.id ??
-            `${participantInfo.identity}-${text}`;
-
-          const uniqueKey = `${role}-${segmentId}-${text}`;
-
-          if (
-            transcriptSegmentIdsRef.current.has(uniqueKey)
-          ) {
-            return;
-          }
-
-          transcriptSegmentIdsRef.current.add(uniqueKey);
-
-          console.log("[LIVEKIT TRANSCRIPT]", {
-            role,
-            text,
-            isFinal,
-            identity: participantInfo.identity,
-            localIdentity: room.localParticipant.identity,
-            attributes,
-          });
-
-          appendTranscript(role, text);
-        } catch (error) {
-          console.warn("[TRANSCRIPT ERROR]", error);
+        if (!text) {
+          return;
         }
-      },
-    );
+
+        const attributes = reader.info?.attributes ?? {};
+
+        const isUser = participantInfo.identity === room.localParticipant.identity;
+
+        const role: "user" | "assistant" = isUser ? "user" : "assistant";
+
+        const isFinal = attributes["lk.transcription_final"] === "true";
+
+        if (role === "user" && !isFinal) {
+          return;
+        }
+
+        const segmentId =
+          attributes["lk.segment_id"] ?? reader.info?.id ?? `${participantInfo.identity}-${text}`;
+
+        const uniqueKey = `${role}-${segmentId}-${text}`;
+
+        if (transcriptSegmentIdsRef.current.has(uniqueKey)) {
+          return;
+        }
+
+        transcriptSegmentIdsRef.current.add(uniqueKey);
+
+        console.log("[LIVEKIT TRANSCRIPT]", {
+          role,
+          text,
+          isFinal,
+          identity: participantInfo.identity,
+          localIdentity: room.localParticipant.identity,
+          attributes,
+        });
+
+        appendTranscript(role, text);
+      } catch (error) {
+        console.warn("[TRANSCRIPT ERROR]", error);
+      }
+    });
   };
 
   const start = async () => {
@@ -406,6 +339,7 @@ export default function VoiceRecorder() {
       const newSessionId = await createNewSession();
 
       sessionIdRef.current = newSessionId;
+      setActiveSessionId(newSessionId);
       analyticsEndedRef.current = false;
 
       dispatch(setSessionId(newSessionId));
@@ -414,19 +348,12 @@ export default function VoiceRecorder() {
         console.warn("[ANALYTICS START ERROR]", error);
       });
 
-      const tokenResponse = await fetch(
-        `${LIVEKIT_TOKEN_URL}/${newSessionId}`,
-      );
+      const tokenResponse = await fetch(`${LIVEKIT_TOKEN_URL}/${newSessionId}`);
 
       if (!tokenResponse.ok) {
-        const errorBody = await tokenResponse
-          .json()
-          .catch(() => null);
+        const errorBody = await tokenResponse.json().catch(() => null);
 
-        throw new Error(
-          errorBody?.message ??
-            "Failed to retrieve the LiveKit token",
-        );
+        throw new Error(errorBody?.message ?? "Failed to retrieve the LiveKit token");
       }
 
       const responseBody = await tokenResponse.json();
@@ -510,7 +437,7 @@ export default function VoiceRecorder() {
         void endAnalyticsOnce("completed");
 
         resetState();
-
+        setActiveSessionId(null);
         sessionIdRef.current = null;
 
         dispatch(clearSession());
@@ -541,9 +468,7 @@ export default function VoiceRecorder() {
       await cleanupLiveKit("failed");
 
       const message =
-        error instanceof Error
-          ? error.message
-          : "Microphone or connection access denied";
+        error instanceof Error ? error.message : "Microphone or connection access denied";
 
       toast.error(message);
     }
@@ -582,19 +507,13 @@ export default function VoiceRecorder() {
       <button
         type="button"
         onClick={recording ? stop : start}
-        disabled={
-          connecting || connectionStatus === "reconnecting"
-        }
+        disabled={connecting || connectionStatus === "reconnecting"}
         className={`inline-flex h-16 w-16 items-center justify-center rounded-full transition ${
           recording
             ? "animate-pulse bg-red-500 text-white"
             : "bg-primary text-primary-foreground hover:opacity-90"
         } disabled:cursor-not-allowed disabled:opacity-40`}
-        aria-label={
-          recording
-            ? "Stop voice session"
-            : "Start voice session"
-        }
+        aria-label={recording ? "Stop voice session" : "Start voice session"}
       >
         {connecting ? (
           <Loader2 className="h-6 w-6 animate-spin" />
@@ -605,9 +524,7 @@ export default function VoiceRecorder() {
         )}
       </button>
 
-      <p className="select-none text-xs text-muted-foreground">
-        {getStatusText()}
-      </p>
+      <p className="select-none text-xs text-muted-foreground">{getStatusText()}</p>
     </div>
   );
 }

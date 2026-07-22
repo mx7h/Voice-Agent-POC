@@ -1,15 +1,13 @@
 import { useEffect, useRef } from "react";
-
 import { cartApi } from "@/api/cart.api";
-import { useAppDispatch, useAppSelector } from "@/redux/hooks";
+import { useAppDispatch } from "@/redux/hooks";
 import { setCart } from "@/redux/slices/cartSlice";
 
-export function useCartPolling(enabled: boolean) {
+export function useCartPolling(
+  enabled: boolean,
+  sessionId: string | null,
+) {
   const dispatch = useAppDispatch();
-
-  const sessionId = useAppSelector(
-    (state) => state.session.sessionId,
-  );
 
   const intervalRef = useRef<number | null>(null);
   const inFlightRef = useRef(false);
@@ -24,17 +22,14 @@ export function useCartPolling(enabled: boolean) {
 
     stopPolling();
 
-    console.log("[CART POLLING STATE]", {
-      enabled,
-      sessionId,
-    });
-
     if (!enabled || !sessionId) {
       dispatch(setCart(null));
       return stopPolling;
     }
 
     let active = true;
+
+    console.log("[CART POLLING START]", { sessionId });
 
     const fetchCart = async () => {
       if (inFlightRef.current) return;
