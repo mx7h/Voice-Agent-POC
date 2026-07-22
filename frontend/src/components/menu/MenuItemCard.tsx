@@ -4,6 +4,8 @@ import toast from "react-hot-toast";
 import type { MenuItem, ModifierGroup, ModifierOption, SelectedModifier } from "@/types";
 import { formatCurrency } from "@/utils/format";
 import { useAppDispatch, useAppSelector } from "@/redux/hooks";
+import { sessionApi } from "@/api/session.api";
+import { setSessionCreating, setSessionError, setSessionId } from "@/redux/slices/sessionSlice";
 import { addToCart } from "@/redux/slices/cartSlice";
 import {
   Dialog,
@@ -53,20 +55,30 @@ function ModifierGroupSelector({ group, selections, onToggle, subSelections }: M
           const isDisabled = !isSelected && reachedMax;
 
           const handleToggle = (checked: boolean) => {
-            if (checked && reachedMax) {
-              if (maxSel === 1 && selectedOptions.length > 0) {
-                // Auto deselect the other selected option for single-select radio-like groups
-                const previousSelectedOptionName = selectedOptions[0].optionName;
+            const maxSel = group.maxSelection ?? (group.multiple ? Infinity : 1);
+            const isSingleSelect = !group.multiple && maxSel === 1;
+
+            // For radio/single-select groups, selecting one option should replace the previous one
+            if (checked && isSingleSelect) {
+              selectedOptions.forEach((selectedOption) => {
                 const previousOption = group.options.find(
-                  (o) => o.name === previousSelectedOptionName,
+                  (option) => option.name === selectedOption.optionName,
                 );
-                if (previousOption) {
+
+                if (previousOption && previousOption.name !== option.name) {
                   onToggle(previousOption, group, false);
                 }
-              } else {
-                return;
-              }
+              });
+
+              onToggle(option, group, true);
+              return;
             }
+
+            // For multi-select groups, block selection after max limit
+            if (checked && reachedMax) {
+              return;
+            }
+
             onToggle(option, group, checked);
           };
 
@@ -122,7 +134,7 @@ export default function MenuItemCard({ item }: { item: MenuItem }) {
   const sessionId = useAppSelector((s) => s.session.sessionId);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selections, setSelections] = useState<SelectedModifier[]>([]);
-  const disabled = item.available === false || !sessionId;
+  const disabled = item.available === false;
 
   const hasModifiers = item.modifierGroups && item.modifierGroups.length > 0;
 
@@ -194,20 +206,48 @@ export default function MenuItemCard({ item }: { item: MenuItem }) {
     return item.basePrice + modifiersTotal;
   }, [item.basePrice, selections]);
 
-  const onAdd = async () => {
-    if (!sessionId) return;
+  const getOrCreateSessionId = async () => {
+    if (sessionId) return sessionId;
+
     try {
+      dispatch(setSessionCreating());
+
+      const response = await sessionApi.create();
+
+      const newSessionId = response.sessionId;
+
+      if (!newSessionId) {
+        throw new Error("Session response missing sessionId");
+      }
+
+      dispatch(setSessionId(String(newSessionId)));
+
+      return String(newSessionId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to create session";
+
+      dispatch(setSessionError(message));
+
+      throw new Error(message);
+    }
+  };
+
+  const onAdd = async () => {
+    try {
+      const activeSessionId = await getOrCreateSessionId();
+
       await dispatch(
         addToCart({
-          sessionId,
+          sessionId: activeSessionId,
           menuId: item._id,
           quantity: 1,
           selectedModifiers: selections,
         }),
       ).unwrap();
+
       toast.success(`${item.name} added`);
       setDialogOpen(false);
-      setSelections([]); // Reset selections on success
+      setSelections([]);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to add");
     }
