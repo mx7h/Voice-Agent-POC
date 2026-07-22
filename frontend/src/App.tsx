@@ -15,7 +15,7 @@ import ErrorBoundary from "./components/common/ErrorBoundary";
 
 export default function App() {
   useBootstrap();
-  useSocketEvents();
+  // useSocketEvents();
 
   useEffect(() => {
     document.title = "Voice AI Ordering";

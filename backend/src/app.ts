@@ -8,7 +8,14 @@ import routes from "./routes/index.js";
 const app = express();
 
 // Middlewares
-app.use(cors());
+const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+
+app.use(
+  cors({
+    origin: clientUrl,
+    credentials: true,
+  }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
