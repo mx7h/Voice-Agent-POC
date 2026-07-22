@@ -372,18 +372,20 @@ export class AgentFunctions {
             id: String(item._id),
             name: String(item.name),
             category: String(item.category),
-            price: Number(item.basePrice),
+            price: this.formatMoney(item.basePrice),
             available: item.available === true,
         };
     }
-
+    private formatMoney(value: unknown) {
+        return Number((Number(value ?? 0) / 100).toFixed(2));
+    }
     private formatMenuItem(item: any) {
         return {
             id: String(item._id),
             name: String(item.name),
             description: String(item.description ?? ""),
             category: String(item.category),
-            price: Number(item.basePrice),
+            price: this.formatMoney(item.basePrice),
             available: item.available === true,
             hasRequiredModifiers: (item.modifierGroups ?? []).some(
                 (group: any) => group.required === true,
@@ -414,13 +416,13 @@ export class AgentFunctions {
                     groupName: String(modifier.groupName),
                     name: String(modifier.name ?? modifier.optionName),
                     optionName: String(modifier.optionName ?? modifier.name),
-                    price: Number(modifier.price ?? 0),
+                    price: this.formatMoney(modifier.price ?? 0),
                 })),
-                totalPrice: Number(item.totalPrice),
+                totalPrice: this.formatMoney(item.totalPrice),
             })),
-            subtotal: Number(cart.subtotal ?? 0),
-            tax: Number(cart.tax ?? 0),
-            total: Number(cart.total ?? 0),
+            subtotal: this.formatMoney(cart.subtotal ?? 0),
+            tax: this.formatMoney(cart.tax ?? 0),
+            total: this.formatMoney(cart.total ?? 0),
         };
     }
 
