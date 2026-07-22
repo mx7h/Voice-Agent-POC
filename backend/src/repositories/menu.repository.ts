@@ -15,7 +15,12 @@ export class MenuRepository {
   async getMenuById(id: string) {
     return Menu.findById(id).lean();
   }
-
+  async findMenuByName(name: string) {
+    return Menu.findOne({
+      name: { $regex: new RegExp(name.trim(), "i") },
+      available: true,
+    });
+  }
   /**
    * Search menu by text
    */

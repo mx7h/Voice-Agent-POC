@@ -27,7 +27,28 @@ export class MenuService {
 
     return menu;
   }
+  /**
+   * Find menu item by name
+   */
+  async findMenuByName(name: string) {
+    if (!name.trim()) {
+      throw new ApiError(
+        StatusCodes.BAD_REQUEST,
+        "Menu item name is required"
+      );
+    }
 
+    const menu = await menuRepository.findMenuByName(name);
+
+    if (!menu) {
+      throw new ApiError(
+        StatusCodes.NOT_FOUND,
+        "Menu item not found"
+      );
+    }
+
+    return menu;
+  }
   /**
    * Search menu
    */

@@ -81,12 +81,42 @@ export class AgentFunctions {
 
     async getMenuItem(menuId: string): Promise<AgentFunctionResult> {
         return this.executeSafely("getMenuItem", async () => {
-            const item = await menuService.getMenuById(menuId);
+            const value = String(menuId ?? "").trim();
+
+            if (!value) {
+                return {
+                    success: false,
+                    message: "Menu item id or name is required.",
+                };
+            }
+
+            const isMongoId = /^[a-f\d]{24}$/i.test(value);
+
+            const item = isMongoId
+                ? await menuService.getMenuById(value)
+                : await menuService.findMenuByName(value);
 
             return {
                 success: true,
                 message: `${item.name} details loaded.`,
                 data: this.formatMenuItem(item),
+            };
+        });
+    }
+
+    async searchMenu(query: string): Promise<AgentFunctionResult> {
+        return this.executeSafely("searchMenu", async () => {
+            const items = await menuService.searchMenu(query);
+
+            return {
+                success: true,
+                message:
+                    items.length > 0
+                        ? `${items.length} matching menu items found.`
+                        : "No matching menu items found.",
+                data: {
+                    items: items.map((item: any) => this.formatMenuSummary(item)),
+                },
             };
         });
     }

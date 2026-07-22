@@ -41,10 +41,11 @@ type TranscriptMessage = {
 
 type AnalyticsEndStatus = "completed" | "failed";
 
-const LIVEKIT_TOKEN_URL =
-  "http://localhost:5000/api/v1/livekit/token";
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:5000/api/v1";
 
-const SESSION_URL = "http://localhost:5000/api/v1/sessions";
+const LIVEKIT_TOKEN_URL = `${API_BASE_URL}/livekit/token`;
+const SESSION_URL = `${API_BASE_URL}/sessions`;
 
 export default function VoiceRecorder() {
   const dispatch = useAppDispatch();

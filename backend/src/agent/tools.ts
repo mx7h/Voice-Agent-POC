@@ -53,6 +53,25 @@ export function createAgentTools(functions: AgentFunctions) {
         }),
 
         llm.tool({
+            name: "searchMenu",
+
+            description:
+                "Search available menu items by customer words like chicken, burger, fries, combo, drink, or dessert. Returns menu ids to use with getMenuItem.",
+
+            parameters: z.object({
+                query: z
+                    .string()
+                    .min(1)
+                    .describe("Customer search query, for example chicken combo or burger."),
+            }),
+
+            execute: async ({ query }) => {
+                console.log("[TOOL] searchMenu", { query });
+                return functions.searchMenu(query);
+            },
+        }),
+
+        llm.tool({
             name: "getCart",
 
             description:
