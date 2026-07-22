@@ -6,7 +6,12 @@ import { useCartPolling } from "@/hooks/useCartPolling";
 import { analyticsApi } from "@/api/analytics.api";
 
 import { useAppDispatch } from "@/redux/hooks";
-import { clearSession, setSessionId } from "@/redux/slices/sessionSlice";
+import {
+  clearSession,
+  setSessionCreating,
+  setSessionError,
+  setSessionId,
+} from "@/redux/slices/sessionSlice";
 import { setCart } from "@/redux/slices/cartSlice";
 import { appendEntry, clearTranscript, setStatus } from "@/redux/slices/transcriptSlice";
 
@@ -187,8 +192,9 @@ export default function VoiceRecorder() {
       resetState();
 
       sessionIdRef.current = null;
-      transcriptSegmentIdsRef.current.clear();
       setActiveSessionId(null);
+
+      transcriptSegmentIdsRef.current.clear();
 
       dispatch(clearSession());
       dispatch(setCart(null));
@@ -335,14 +341,20 @@ export default function VoiceRecorder() {
       setConnecting(true);
       setConnectionStatus("connecting");
       dispatch(setStatus("processing"));
+      dispatch(setSessionCreating());
 
       const newSessionId = await createNewSession();
+
+      const currentSessionId = newSessionId;
+
+      console.log("[VOICE SESSION CREATED]", newSessionId);
 
       sessionIdRef.current = newSessionId;
       setActiveSessionId(newSessionId);
       analyticsEndedRef.current = false;
 
       dispatch(setSessionId(newSessionId));
+      console.log("[REDUX SESSION SET]", newSessionId);
 
       void analyticsApi.start(newSessionId).catch((error) => {
         console.warn("[ANALYTICS START ERROR]", error);
@@ -421,6 +433,10 @@ export default function VoiceRecorder() {
       });
 
       room.on(RoomEvent.Disconnected, () => {
+        if (sessionIdRef.current !== currentSessionId) {
+          return;
+        }
+
         toast.dismiss("livekit-reconnect");
 
         const wasRecording = recordingRef.current;
@@ -437,6 +453,7 @@ export default function VoiceRecorder() {
         void endAnalyticsOnce("completed");
 
         resetState();
+
         setActiveSessionId(null);
         sessionIdRef.current = null;
 
@@ -464,8 +481,11 @@ export default function VoiceRecorder() {
       });
     } catch (error) {
       console.error("LiveKit stream start error:", error);
-
+      
       await cleanupLiveKit("failed");
+      
+      dispatch(setSessionError(error instanceof Error ? error.message : "Session failed"));
+
 
       const message =
         error instanceof Error ? error.message : "Microphone or connection access denied";
