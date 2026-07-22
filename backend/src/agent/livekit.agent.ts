@@ -23,6 +23,7 @@ export default defineAgent({
 
         const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
         const groqApiKey = process.env.GROQ_API_KEY;
+        const groqModel =  process.env.GROQ_MODEL || "llama-3.1-8b-instant";
 
         if (!groqApiKey) {
             throw new Error("GROQ_API_KEY is missing in .env");
@@ -137,7 +138,7 @@ IMPORTANT:
 
             llm: openai.LLM.withGroq({
                 apiKey: groqApiKey,
-                model: "openai/gpt-oss-120b",
+                model: groqModel,
                 temperature: 0.2,
             }),
 
