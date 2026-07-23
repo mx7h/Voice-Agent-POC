@@ -7,7 +7,7 @@ import CartPage from "./pages/Cart";
 import OrderPage from "./pages/Order";
 import OrdersHistoryPage from "./pages/Orders";
 import AnalyticsPage from "./pages/Analytics";
-import CallLogsPage from "./pages/CallLogs";
+
 import NotFound from "./pages/NotFound";
 import { useBootstrap } from "./hooks/useBootstrap";
 import { useSocketEvents } from "./socket/events";
@@ -31,7 +31,7 @@ export default function App() {
           <Route path="/orders" element={<OrdersHistoryPage />} />
           <Route path="/order/:id" element={<OrderPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
-          <Route path="/call-logs" element={<CallLogsPage />} />
+          
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>

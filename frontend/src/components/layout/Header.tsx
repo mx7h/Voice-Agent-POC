@@ -7,7 +7,7 @@ const links = [
   { to: "/cart", label: "Cart" },
   { to: "/orders", label: "Orders" },
   { to: "/analytics", label: "Analytics" },
-  { to: "/call-logs", label: "Call Logs" },
+  // { to: "/call-logs", label: "Call Logs" },
 ];
 
 export default function Header() {

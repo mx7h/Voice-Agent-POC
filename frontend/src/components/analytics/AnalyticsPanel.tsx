@@ -257,9 +257,9 @@ function SessionCard({ session }: { session: AnalyticsSessionWithTimeline }) {
     ["Completion tokens", formatNumber(session.completionTokens)],
     ["Cached tokens", formatNumber(session.cachedPromptTokens)],
 
-    ["LLM duration", formatMs(session.llmDurationMs)],
-    ["LLM TTFT", formatMs(session.llmTtftMs)],
-    ["Avg LLM duration", formatMs(session.llmAverageDurationMs)],
+    // ["LLM duration", formatMs(session.llmDurationMs)],
+    // ["LLM TTFT", formatMs(session.llmTtftMs)],
+    // ["Avg LLM duration", formatMs(session.llmAverageDurationMs)],
   ];
 
   return (
@@ -474,7 +474,7 @@ export default function AnalyticsPanel() {
           helper="Backend tool calls"
         />
 
-        <StatCard
+        {/* <StatCard
           label="Avg TTFT"
           value={formatMs(summary?.averageLlmTtftMs)}
           icon={Timer}
@@ -486,7 +486,7 @@ export default function AnalyticsPanel() {
           value={formatMs(summary?.averageLlmDurationMs)}
           icon={Timer}
           helper="LLM response time"
-        />
+        /> */}
       </div>
 
       <div className="rounded-lg border border-border bg-card">
