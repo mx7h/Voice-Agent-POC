@@ -25,4 +25,6 @@ const startServer = async () => {
   }
 };
 
-startServer();
+startServer().catch((error) => {
+  console.error("[STARTUP ERROR]", error);
+});
