@@ -19,6 +19,6 @@ router.use("/call-logs", callLogRoutes);
 router.use("/analytics", analyticsRoutes);
 router.use("/sessions", sessionRoutes);
 router.use("/livekit", livekitRoutes);
-router.use("/analytics", analyticsRoutes);
+
 
 export default router;

@@ -2,38 +2,43 @@
 
 ## 1. Overview
 
-The restaurant voice agent uses structured tools to interact with menu, cart, session, order, and analytics services.
+The restaurant voice agent uses structured tools to read authoritative menu data, validate modifiers, manage the Redis cart, and place MongoDB orders.
 
-The LLM does not directly read MongoDB or Redis. It chooses a tool, the tool validates the request, calls the backend service layer, and returns a structured result.
+The LLM does not calculate prices or directly access MongoDB or Redis.
 
 ```mermaid
 flowchart LR
     U[Customer Speech] --> STT[Deepgram STT]
     STT --> LLM[Groq LLM]
-    LLM --> T[Structured Tool Call]
-    T --> F[AgentFunctions]
-    F --> S[Service Layer]
+    LLM --> TW[LiveKit Tool Wrapper]
+    TW --> AF[AgentFunctions]
+    AF --> S[Service Layer]
     S --> R[(Redis)]
     S --> M[(MongoDB)]
-    F --> LLM
+    AF --> TW
+    TW --> LLM
     LLM --> TTS[Deepgram TTS]
-    TTS --> V[Voice Response]
+    TTS --> U
 ```
 
-This approach prevents the agent from inventing:
+The current ordering tools are:
 
-- Menu items
-- Prices
-- Modifier choices
-- Cart contents
-- Order totals
-- Order status
+| Tool          | Purpose                                      |
+| ------------- | -------------------------------------------- |
+| `listMenu`    | Return available menu names, IDs, and prices |
+| `searchMenu`  | Search menu items using customer wording     |
+| `getMenuItem` | Return one item's modifier tree              |
+| `getCart`     | Return current cart items and totals         |
+| `addToCart`   | Validate and add an item                     |
+| `placeOrder`  | Place the order after explicit confirmation  |
+
+`getRestaurant` is used internally during startup and analytics. Cart-removal, cart-clearing, and session-closing functions exist in `AgentFunctions`, but they are not required as public LLM tools in the current ordering flow.
 
 ---
 
-## 2. Tool Result Format
+## 2. Internal Results vs. LLM-Facing Results
 
-All agent tools return a consistent result shape:
+`AgentFunctions` returns this internal shape:
 
 ```ts
 interface AgentFunctionResult<T = unknown> {
@@ -43,96 +48,101 @@ interface AgentFunctionResult<T = unknown> {
 }
 ```
 
-Example success result:
+The LiveKit tool wrapper projects successful results into smaller LLM-facing payloads. This keeps business logic unchanged while reducing prompt tokens.
 
-```json
-{
-  "success": true,
-  "message": "Chicken Combo details loaded.",
-  "data": {}
-}
-```
-
-Example failure result:
-
-```json
-{
-  "success": false,
-  "message": "Menu item not found."
-}
-```
-
-The agent must not claim an action succeeded when `success` is `false`.
-
----
-
-## 3. `listMenu`
-
-### Purpose
-
-Returns all currently available menu items in a compact format.
-
-### When the agent uses it
-
-- The customer asks to hear the menu
-- The customer asks what food is available
-- The customer does not know what to order
-
-### Input
-
-No parameters.
-
-```json
-{}
-```
-
-### Output
+Example internal result:
 
 ```json
 {
   "success": true,
   "message": "2 menu items are available.",
   "data": {
-    "items": [
-      {
-        "id": "menu-object-id",
-        "name": "Margherita Pizza",
-        "category": "Pizza",
-        "price": 399,
-        "available": true
-      },
-      {
-        "id": "menu-object-id",
-        "name": "Chicken Combo",
-        "category": "Combo",
-        "price": 399,
-        "available": true
-      }
-    ]
+    "items": []
   }
 }
 ```
 
-### Important behavior
+Example LLM-facing result:
 
-- Returns only menu summaries
-- Does not return full modifier groups
-- Keeps tool output smaller to reduce token usage
-- Prices are stored as normal currency values, so `399` means `₹399`
+```json
+{
+  "success": true,
+  "items": []
+}
+```
+
+Failure results are preserved because they may contain validation details such as `missingModifierGroups`.
 
 ---
 
-## 4. `searchMenu`
+## 3. Compact Tool Shorthand
+
+Successful tool outputs use compact keys:
+
+| Key     | Meaning                     |
+| ------- | --------------------------- |
+| `n`     | Name                        |
+| `g`     | Modifier group name         |
+| `opts`  | Available options           |
+| `req`   | Required                    |
+| `min`   | Minimum selections          |
+| `max`   | Maximum selections          |
+| `multi` | Multiple selections allowed |
+| `p`     | Additional price            |
+| `mods`  | Nested modifier groups      |
+| `qty`   | Quantity                    |
+| `cat`   | Category when included      |
+
+Nested `mods` belong only to the exact parent option containing them.
+
+---
+
+## 4. `listMenu`
 
 ### Purpose
 
-Searches available menu items using customer language.
+Return all available menu items in a minimal form.
 
-### When the agent uses it
+### Input
 
-- The customer asks for a specific item
-- The customer uses partial words such as `chicken`, `burger`, `combo`, or `pizza`
-- The agent needs to locate the correct menu ID before calling `getMenuItem`
+```json
+{}
+```
+
+### LLM-facing success output
+
+```json
+{
+  "success": true,
+  "items": [
+    {
+      "id": "menu-object-id",
+      "n": "Margherita Pizza",
+      "price": 299
+    },
+    {
+      "id": "menu-object-id",
+      "n": "Chicken Combo",
+      "price": 399
+    }
+  ]
+}
+```
+
+### Behavior
+
+- Reads only available items
+- Does not return full modifier trees
+- Gives the model enough data to speak the menu and select an item ID
+- Prices are rupees: `299` means `₹299`
+
+---
+
+## 5. `searchMenu`
+
+### Purpose
+
+Search available menu items using the customer's wording.
 
 ### Input
 
@@ -142,50 +152,37 @@ Searches available menu items using customer language.
 }
 ```
 
-### Output
+### LLM-facing success output
 
 ```json
 {
   "success": true,
-  "message": "1 matching menu item found.",
-  "data": {
-    "items": [
-      {
-        "id": "menu-object-id",
-        "name": "Chicken Combo",
-        "category": "Combo",
-        "price": 399,
-        "available": true
-      }
-    ]
-  }
+  "items": [
+    {
+      "id": "menu-object-id",
+      "n": "Chicken Combo",
+      "price": 399
+    }
+  ]
 }
 ```
 
-### Important behavior
+### Behavior
 
-- Searches menu name, description, keywords, or related indexed fields
-- Returns menu IDs for use with `getMenuItem`
-- Does not add an item directly
+- Uses the menu search service
+- Returns lightweight matches
+- Does not add anything to the cart
+- The returned ID can be passed to `getMenuItem`
 
 ---
 
-## 5. `getMenuItem`
+## 6. `getMenuItem`
 
 ### Purpose
 
-Returns full details for one menu item, including modifier groups and available choices.
-
-### When the agent uses it
-
-- Before `addToCart`
-- After `searchMenu`
-- When the customer asks for details about one item
-- When the agent needs required and optional modifier choices
+Return authoritative details and the complete recursive modifier structure for one item.
 
 ### Input
-
-Preferred:
 
 ```json
 {
@@ -193,89 +190,111 @@ Preferred:
 }
 ```
 
-The function also supports a name fallback when a valid MongoDB ID is not available.
+`AgentFunctions.getMenuItem` can resolve either a MongoDB ID or an item name. The tool should normally use a returned menu ID.
 
-### Output
+### LLM-facing success output
 
 ```json
 {
   "success": true,
-  "message": "Chicken Combo details loaded.",
-  "data": {
-    "id": "menu-object-id",
-    "name": "Chicken Combo",
-    "description": "Combo meal",
-    "category": "Combo",
-    "price": 399,
-    "available": true,
-    "hasRequiredModifiers": true,
-    "modifierGroups": [
-      {
-        "groupName": "Entree",
-        "required": true,
-        "multiple": false,
-        "minSelection": 1,
-        "maxSelection": 1,
-        "choices": [
-          {
-            "name": "Burger",
-            "additionalPrice": 0
-          },
-          {
-            "name": "Wrap",
-            "additionalPrice": 0
-          }
-        ]
-      },
-      {
-        "groupName": "Side",
-        "required": true,
-        "multiple": false,
-        "minSelection": 1,
-        "maxSelection": 1,
-        "choices": [
-          {
-            "name": "Fries",
-            "additionalPrice": 0
-          },
-          {
-            "name": "Salad",
-            "additionalPrice": 0
-          }
-        ]
-      }
-    ]
-  }
+  "id": "menu-object-id",
+  "n": "Chicken Combo",
+  "price": 399,
+  "mods": [
+    {
+      "g": "Entree",
+      "req": true,
+      "multi": false,
+      "min": 1,
+      "max": 1,
+      "opts": [
+        {
+          "n": "Burger",
+          "p": 0,
+          "mods": [
+            {
+              "g": "Patty",
+              "req": true,
+              "multi": false,
+              "min": 1,
+              "max": 1,
+              "opts": [
+                {
+                  "n": "Grilled Chicken",
+                  "p": 0,
+                  "mods": []
+                },
+                {
+                  "n": "Crispy Chicken",
+                  "p": 30,
+                  "mods": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "n": "Wrap",
+          "p": 0,
+          "mods": []
+        }
+      ]
+    },
+    {
+      "g": "Side",
+      "req": true,
+      "multi": false,
+      "min": 1,
+      "max": 1,
+      "opts": [
+        {
+          "n": "Fries",
+          "p": 0,
+          "mods": []
+        },
+        {
+          "n": "Salad",
+          "p": 20,
+          "mods": []
+        }
+      ]
+    }
+  ]
 }
 ```
 
-### Important behavior
+### Nested-modifier behavior
 
-- Must be called before `addToCart`
-- Returns exact modifier group names and option names
-- Agent must not invent modifier options
-- Agent should ask for modifier choices in one short combined question when practical
-
-Example:
+For the Chicken Combo:
 
 ```text
-Would you like Burger or Wrap, and Fries or Salad?
+Entree
+├── Burger
+│   └── Patty
+│       ├── Grilled Chicken
+│       └── Crispy Chicken
+└── Wrap
+
+Side
+├── Fries
+└── Salad
 ```
+
+Rules:
+
+- Ask `Patty` only when `Burger` is selected
+- Do not ask for `Patty` when `Wrap` is selected
+- Collect every required top-level group
+- Collect every required nested group belonging to a selected parent option
+- Use exact group and option names
 
 ---
 
-## 6. `addToCart`
+## 7. `addToCart`
 
 ### Purpose
 
-Adds a validated item to the active Redis cart.
-
-### When the agent uses it
-
-- After the item has been identified
-- After all required modifiers are collected
-- After optional choices are either selected or skipped
-- When quantity is known
+Validate the item, resolve official modifier data, calculate authoritative prices, and add the item to the active Redis cart.
 
 ### Input
 
@@ -289,82 +308,53 @@ Adds a validated item to the active Redis cart.
       "name": "Burger"
     },
     {
+      "groupName": "Patty",
+      "name": "Grilled Chicken"
+    },
+    {
       "groupName": "Side",
-      "name": "Fries"
+      "name": "Salad"
     }
   ]
 }
 ```
 
-### Parameter rules
+### Input rules
 
-#### `menuId`
-
-Must identify an existing menu item.
-
-#### `quantity`
-
-Must be a positive whole number.
-
-Valid:
-
-```json
-1
-```
-
-The tool currently normalizes numeric strings for resilience, but the LLM should send a JSON number.
-
-#### `selectedModifiers`
-
-Must be an array of exact modifier group and option names returned by `getMenuItem`.
+- `quantity` should be a positive JSON number
+- `selectedModifiers` should be an array
+- Group and option names must exactly match `getMenuItem`
+- The wrapper accepts numeric strings and stringified modifier arrays as a resilience fallback, but the model should send correct JSON types
 
 ### Validation
 
-The function validates:
+The function recursively validates:
 
-- Menu item exists
-- Menu item is available
-- Quantity is a positive integer
-- Required modifier groups are present
-- Minimum selection rules are satisfied
-- Modifier group names are valid
-- Modifier option names are valid
-- Selected options are available
+- Menu item existence
+- Item availability
+- Positive whole-number quantity
+- Required top-level modifiers
+- Required nested modifiers for selected parent options
+- Valid group names
+- Valid option names
+- Option availability
+- Maximum selection limits
 
-### Output
+The model cannot supply trusted prices or modifier IDs. `AgentFunctions` resolves them from the menu document.
+
+### LLM-facing success output
 
 ```json
 {
   "success": true,
-  "message": "1 Chicken Combo added to the cart.",
-  "data": {
-    "addedItem": {
-      "name": "Chicken Combo",
-      "quantity": 1,
-      "modifiers": [
-        {
-          "groupName": "Entree",
-          "name": "Burger",
-          "price": 0
-        },
-        {
-          "groupName": "Side",
-          "name": "Fries",
-          "price": 0
-        }
-      ]
-    },
-    "cart": {
-      "items": [],
-      "subtotal": 399,
-      "tax": 19.95,
-      "total": 418.95
-    }
-  }
+  "message": "1 Chicken Combo added to cart.",
+  "total": 439.95
 }
 ```
 
-### Missing modifier response
+### Missing-modifier failure
+
+Failure payloads retain the internal validation data:
 
 ```json
 {
@@ -374,16 +364,21 @@ The function validates:
     "requiresCustomerInput": true,
     "missingModifierGroups": [
       {
-        "groupName": "Side",
-        "required": true,
-        "choices": [
+        "g": "Patty",
+        "req": true,
+        "multi": false,
+        "min": 1,
+        "max": 1,
+        "opts": [
           {
-            "name": "Fries",
-            "additionalPrice": 0
+            "n": "Grilled Chicken",
+            "p": 0,
+            "mods": []
           },
           {
-            "name": "Salad",
-            "additionalPrice": 0
+            "n": "Crispy Chicken",
+            "p": 30,
+            "mods": []
           }
         ]
       }
@@ -394,39 +389,27 @@ The function validates:
 
 ---
 
-## 7. `getCart`
+## 8. `getCart`
 
 ### Purpose
 
-Returns the latest cart state from Redis.
-
-### When the agent uses it
-
-- The customer asks what is in the cart
-- Before summarizing the cart
-- Before asking for final confirmation
-- Before placing an order
+Return the latest Redis cart without allowing the LLM to calculate totals.
 
 ### Input
-
-No parameters.
 
 ```json
 {}
 ```
 
-### Empty cart output
+### Empty-cart output
 
 ```json
 {
   "success": true,
-  "message": "The cart is empty.",
-  "data": {
-    "items": [],
-    "subtotal": 0,
-    "tax": 0,
-    "total": 0
-  }
+  "items": [],
+  "subtotal": 0,
+  "tax": 0,
+  "total": 0
 }
 ```
 
@@ -435,60 +418,52 @@ No parameters.
 ```json
 {
   "success": true,
-  "message": "1 cart item found.",
-  "data": {
-    "items": [
-      {
-        "cartItemId": "cart-item-uuid",
-        "name": "Chicken Combo",
-        "quantity": 1,
-        "modifiers": [
-          {
-            "groupName": "Entree",
-            "name": "Burger",
-            "price": 0
-          },
-          {
-            "groupName": "Side",
-            "name": "Fries",
-            "price": 0
-          }
-        ],
-        "totalPrice": 399
-      }
-    ],
-    "subtotal": 399,
-    "tax": 19.95,
-    "total": 418.95
-  }
+  "items": [
+    {
+      "id": "cart-item-uuid",
+      "n": "Chicken Combo",
+      "qty": 1,
+      "mods": [
+        {
+          "g": "Entree",
+          "n": "Burger",
+          "p": 0
+        },
+        {
+          "g": "Patty",
+          "n": "Grilled Chicken",
+          "p": 0
+        },
+        {
+          "g": "Side",
+          "n": "Salad",
+          "p": 20
+        }
+      ],
+      "total": 419
+    }
+  ],
+  "subtotal": 419,
+  "tax": 20.95,
+  "total": 439.95
 }
 ```
 
-### Important behavior
+### Behavior
 
-- Totals come from the backend
-- The LLM must not calculate tax or totals itself
-- The agent should speak prices in rupees
-
-Example:
-
-```text
-Your cart has one Chicken Combo for ₹399. Tax is ₹19.95, and the total is ₹418.95.
-```
+- Reads current cart state from Redis
+- Returns backend-calculated subtotal, tax, and total
+- Uses compact cart item and modifier keys
+- Should be used before a final cart summary
+- Is not needed merely to repeat the total already returned by a successful `addToCart`
 
 ---
 
-## 8. `placeOrder`
+## 9. `placeOrder`
 
 ### Purpose
 
-Creates a persistent order after explicit customer confirmation.
-
-### When the agent uses it
-
-- The cart has been retrieved using `getCart`
-- The final cart has been summarized
-- The customer clearly confirms the order
+Create a persistent MongoDB order after explicit confirmation.
 
 ### Input
 
@@ -502,95 +477,80 @@ Creates a persistent order after explicit customer confirmation.
 
 The function checks:
 
-- `confirmed` is `true`
-- Cart is not empty
-- Restaurant is open
-- Customer details are available
+- `confirmed` is exactly `true`
+- The cart is not empty
+- The restaurant is open
+- Customer details are present in the POC session
 - Order creation succeeds
 
-### Output
+### LLM-facing success output
 
 ```json
 {
   "success": true,
   "message": "The order was placed successfully.",
-  "data": {
-    "orderId": "order-object-id",
-    "orderNumber": "ORD-1784722164877-990F48",
-    "status": "confirmed",
-    "total": 418.95
-  }
+  "orderNumber": "ORD-1784804519497-3FE8F8",
+  "total": 439.95
+}
+```
+
+### Failure example
+
+```json
+{
+  "success": false,
+  "message": "The cart is empty. Add an item before placing the order."
 }
 ```
 
 ### Side effects
 
-After successful placement:
+After success:
 
 - Order is stored in MongoDB
-- Analytics are updated
+- Order analytics are updated
 - Redis cart is cleared
 - Session state becomes `order_placed`
-- Frontend polling receives an empty cart
 
-### Important behavior
-
-The agent must only say the order is confirmed when:
-
-```text
-placeOrder.success === true
-```
+The agent may say the order is confirmed only after `placeOrder` returns `success: true`.
 
 ---
 
-## 9. Internal Agent Functions
+## 10. Internal `AgentFunctions`
 
-The `AgentFunctions` class also contains functions that may be used internally even when they are not exposed as public LLM tools.
+The service-facing class contains these functions:
 
-### `getRestaurant`
+| Function         | Role                                                         |
+| ---------------- | ------------------------------------------------------------ |
+| `getRestaurant`  | Load restaurant name, contact details, hours, and open state |
+| `listMenu`       | Read available menu summaries                                |
+| `getMenuItem`    | Resolve item by ID or name                                   |
+| `searchMenu`     | Search menu documents                                        |
+| `getCart`        | Read the current Redis cart                                  |
+| `addToCart`      | Recursively validate and add an item                         |
+| `removeFromCart` | Remove a cart item by `cartItemId`                           |
+| `clearCart`      | Clear the active cart                                        |
+| `placeOrder`     | Validate confirmation and create the order                   |
+| `endSession`     | Close the Redis session                                      |
 
-Loads restaurant details:
-
-- Name
-- Address
-- Phone
-- Opening hours
-- Open/closed status
-
-It is commonly called when the agent starts so the greeting can include the restaurant name.
-
-### `removeFromCart`
-
-Removes one cart item using its `cartItemId`.
-
-### `clearCart`
-
-Clears all cart items for the active session.
-
-### `endSession`
-
-Closes the active Redis session.
-
-These functions should only be exposed as LLM tools when the voice experience requires them.
+Not every internal function is exposed to the LLM.
 
 ---
 
-## 10. Tool Execution Safety
+## 11. Tool Safety and Analytics
 
-Every function is wrapped by a shared safe execution handler.
+Every internal action runs through `executeSafely`.
 
-The wrapper:
+It:
 
-1. Records start time
-2. Executes the tool action
-3. Measures latency
-4. Records tool analytics
-5. Returns the structured result
-6. Catches errors
-7. Records failed tool calls and error messages
-8. Prevents unhandled errors from terminating the agent session
+1. Starts a latency timer
+2. Executes the service action
+3. Records the tool name, latency, and success status
+4. Records failures in analytics
+5. Converts thrown errors into `success: false`
+6. Prevents a tool error from crashing the agent worker
 
-Example internal flow:
+Conceptual signature:
 
 ```ts
 private async executeSafely(
@@ -599,209 +559,99 @@ private async executeSafely(
 ): Promise<AgentFunctionResult>
 ```
 
-On success:
+Tool analytics include:
 
 ```text
-recordToolCall(sessionId, toolName, latencyMs, true)
-```
-
-On failure:
-
-```text
-recordToolCall(sessionId, toolName, latencyMs, false)
-recordError(sessionId, errorMessage)
+sessionId
+toolName
+latencyMs
+success
+createdAt
 ```
 
 ---
 
-## 11. Tool Analytics
-
-Each tool call records:
-
-- Session ID
-- Tool name
-- Latency
-- Success or failure
-- Timestamp
-
-Examples:
-
-```text
-listMenu
-searchMenu
-getMenuItem
-addToCart
-getCart
-placeOrder
-```
-
-This data is shown in the analytics dashboard.
-
----
-
-## 12. Recommended Agent Workflow
+## 12. Recommended Ordering Flow
 
 ### Full menu request
 
 ```mermaid
 flowchart LR
     U[Customer asks for menu] --> LM[listMenu]
-    LM --> R[Agent reads names and prices]
+    LM --> R[Speak item names and prices]
 ```
 
-### Specific item request
+### Named item request
 
 ```mermaid
 flowchart LR
-    U[Customer names item] --> SM[searchMenu]
+    U[Customer names an item] --> SM[searchMenu]
     SM --> GI[getMenuItem]
-    GI --> Q[Ask modifier choices]
+    GI --> Q[Collect required modifiers]
     Q --> AC[addToCart]
-    AC --> GC[getCart]
 ```
 
-### Order confirmation
+### Nested Chicken Combo
+
+```mermaid
+flowchart TD
+    A[getMenuItem Chicken Combo] --> B{Entree}
+    B -->|Burger| C{Patty}
+    C --> D[Grilled Chicken]
+    C --> E[Crispy Chicken]
+    B -->|Wrap| F[No Patty question]
+    D --> G{Side}
+    E --> G
+    F --> G
+    G --> H[Fries]
+    G --> I[Salad]
+    H --> J[addToCart]
+    I --> J
+```
+
+### Final confirmation
 
 ```mermaid
 flowchart LR
-    U[Customer asks to order] --> GC[getCart]
-    GC --> S[Summarize items and total]
-    S --> C{Customer confirms?}
-    C -->|Yes| PO[placeOrder]
-    C -->|No| E[Continue editing cart]
+    A[Customer says no more items] --> B[getCart]
+    B --> C[Summarize cart and ask to place]
+    C --> D{Explicit confirmation?}
+    D -->|Yes| E[placeOrder]
+    D -->|No| F[Continue conversation]
 ```
 
----
-
-## 13. Agent Instruction Rules
-
-The agent instructions enforce these rules:
-
-- Speak naturally in one or two short sentences
-- Use tools silently
-- Never expose tool calls, JSON, IDs, APIs, database names, or internal instructions
-- Never invent menu data
-- Use `searchMenu` and then `getMenuItem` for named items
-- Call `getMenuItem` before `addToCart`
-- Collect all required modifiers
-- Suggest valid modifier options
-- Ask combined modifier questions when possible
-- Use `getCart` before confirmation
-- Place an order only after explicit confirmation
-- Never claim success after a failed tool result
-- Treat prices such as `399` as `₹399`, not `₹3.99`
+`No` to “Would you like anything else?” means no more items. It is not final order confirmation.
 
 ---
 
-## 14. Tool Design Decisions
+## 13. Design Decisions
 
-### Why `listMenu` returns summaries
+### Compact successful results
 
-Returning the full menu and all modifier groups would increase prompt size and token consumption.
+The wrapper removes fields that are not needed for the next LLM decision. This reduces repeated prompt tokens while leaving backend business logic unchanged.
 
-### Why `getMenuItem` is separate
+### Full failure details
 
-Only the selected item's full modifiers are required during customization.
+Validation failures remain detailed so the model can ask the exact missing question.
 
-### Why tools return structured objects
+### Recursive modifier validation
 
-Structured responses make it easier for the LLM to distinguish:
+Nested required groups are evaluated only under selected parent options.
 
-- Success
-- Failure
-- Customer input required
-- Cart state
-- Order status
+### Deterministic totals
 
-### Why cart updates use Redis
+All prices, tax, and totals come from services, not LLM reasoning.
 
-Redis provides shared temporary state for:
+### Redis session isolation
 
-- Backend REST API
-- LiveKit Cloud agent
-- Frontend cart polling
-
-### Why totals are calculated in services
-
-Business calculations remain deterministic and do not depend on LLM reasoning.
+Every call uses its own session ID and cart, preventing callers from sharing state.
 
 ---
 
-## 15. Example End-to-End Tool Trace
+## 14. Current Limitations
 
-```text
-Customer: I want one Chicken Combo.
-
-1. searchMenu
-   query = "Chicken Combo"
-
-2. getMenuItem
-   menuId = returned menu ID
-
-3. Agent asks:
-   "Would you like Burger or Wrap, and Fries or Salad?"
-
-Customer: Burger and Fries.
-
-4. addToCart
-   menuId = selected menu ID
-   quantity = 1
-   selectedModifiers = [
-     { groupName: "Entree", name: "Burger" },
-     { groupName: "Side", name: "Fries" }
-   ]
-
-5. getCart
-
-6. Agent says:
-   "Your cart has one Chicken Combo for ₹399. The total is ₹418.95. Would you like to place the order?"
-
-Customer: Yes.
-
-7. placeOrder
-   confirmed = true
-
-8. Agent returns the order number.
-```
-
----
-
-## 16. Known Limitations
-
-- Long conversations can increase prompt-token usage
-- Tool schemas are included in LLM context
-- Provider rate limits can delay tool-assisted responses
-- Optional modifier behavior still depends partly on prompt instructions
-- Cart removal and cart clearing tools may not be exposed to the LLM in the current build
-- Real payment and delivery-address tools are outside the POC scope
-
----
-
-## 17. Future Tool Improvements
-
-Potential tools for a production version:
-
-```text
-updateCartItem
-removeFromCart
-clearCart
-checkRestaurantHours
-applyCoupon
-setDeliveryAddress
-calculateDeliveryFee
-choosePickupOrDelivery
-createPaymentIntent
-sendOrderSms
-sendOrderEmail
-endSession
-```
-
-Production improvements could also include:
-
-- Tool retries
-- Provider fallback
-- Idempotency keys
-- Tool permission rules
-- Confirmation policies for destructive actions
-- Tool-level tracing
-- Automated tool tests
+- Conversation history still contributes most of the prompt-token growth
+- LLM provider TPM limits can interrupt long or tool-heavy sessions
+- STT endpointing can mishear short modifier answers
+- Cart removal and editing are not central public tools in the current voice flow
+- Payments, delivery addresses, SMS, and email confirmation are outside the completed POC flow

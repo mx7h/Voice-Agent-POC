@@ -14,13 +14,13 @@ http://localhost:5000/api/v1
 https://voice-agent-poc-f2tv.onrender.com/api/v1
 ```
 
-All routes below are relative to the `/api/v1` base path.
+All routes below are relative to `/api/v1`.
 
 ---
 
 ## 2. Response Format
 
-Successful responses generally follow this structure:
+Successful HTTP responses use a `success` flag and a `data` payload:
 
 ```json
 {
@@ -29,7 +29,7 @@ Successful responses generally follow this structure:
 }
 ```
 
-Error responses generally follow this structure:
+Failed HTTP responses use a `success` flag and a message:
 
 ```json
 {
@@ -38,9 +38,42 @@ Error responses generally follow this structure:
 }
 ```
 
+The exact fields inside `data` depend on the route.
+
 ---
 
-## 3. Health Check
+## 3. Route Summary
+
+| Area       | Method   | Route                                |
+| ---------- | -------- | ------------------------------------ |
+| Health     | `GET`    | `/health`                            |
+| Sessions   | `POST`   | `/sessions`                          |
+| Sessions   | `GET`    | `/sessions/:sessionId`               |
+| LiveKit    | `GET`    | `/livekit/token/:sessionId`          |
+| Restaurant | `GET`    | `/restaurants`                       |
+| Menu       | `GET`    | `/menu`                              |
+| Menu       | `GET`    | `/menu/search?query=...`             |
+| Menu       | `GET`    | `/menu/:menuId`                      |
+| Cart       | `GET`    | `/cart/:sessionId`                   |
+| Cart       | `POST`   | `/cart/:sessionId/items`             |
+| Cart       | `DELETE` | `/cart/:sessionId/items/:cartItemId` |
+| Cart       | `DELETE` | `/cart/:sessionId`                   |
+| Orders     | `POST`   | `/orders/:sessionId`                 |
+| Orders     | `GET`    | `/orders`                            |
+| Orders     | `GET`    | `/orders/:orderId`                   |
+| Orders     | `PATCH`  | `/orders/:orderId/status`            |
+| Analytics  | `POST`   | `/analytics/:sessionId/start`        |
+| Analytics  | `POST`   | `/analytics/:sessionId/turn`         |
+| Analytics  | `POST`   | `/analytics/:sessionId/end`          |
+| Analytics  | `GET`    | `/analytics/summary`                 |
+| Analytics  | `GET`    | `/analytics`                         |
+| Analytics  | `GET`    | `/analytics/:sessionId`              |
+| Call logs  | `GET`    | `/call-logs`                         |
+| Call logs  | `GET`    | `/call-logs/:sessionId`              |
+
+---
+
+## 4. Health
 
 ### Check backend status
 
@@ -59,9 +92,9 @@ Example response:
 
 ---
 
-## 4. Session Routes
+## 5. Sessions
 
-Sessions represent one active restaurant ordering conversation.
+A session represents one restaurant-ordering conversation. The same `sessionId` is used by the frontend, Redis cart, LiveKit room, and voice agent.
 
 ### Create a session
 
@@ -75,17 +108,18 @@ Example response:
 {
   "success": true,
   "data": {
-    "sessionId": "cbcdec12-ec54-4fa0-8725-1d52c86d285a"
+    "sessionId": "cbcdec12-ec54-4fa0-8725-1d52c86d285a",
+    "currentState": "active"
   }
 }
 ```
 
-The backend creates:
+Creating a session initializes:
 
 - A unique session ID
+- Session state
 - An empty Redis cart
-- An active session state
-- Default customer/session metadata
+- Customer metadata used by the POC
 
 ### Get a session
 
@@ -101,7 +135,11 @@ Example response:
   "data": {
     "sessionId": "cbcdec12-ec54-4fa0-8725-1d52c86d285a",
     "currentState": "active",
-    "customer": {},
+    "customer": {
+      "name": "Mohit",
+      "phone": "1234567890",
+      "email": "mohit@example.com"
+    },
     "cart": {
       "items": [],
       "subtotal": 0,
@@ -112,43 +150,25 @@ Example response:
 }
 ```
 
-### Close a session
+Current session states are:
 
-```http
-PATCH /sessions/:sessionId/close
+```text
+active
+order_placed
+closed
 ```
-
-Example response:
-
-```json
-{
-  "success": true,
-  "data": {
-    "sessionId": "cbcdec12-ec54-4fa0-8725-1d52c86d285a",
-    "currentState": "closed"
-  }
-}
-```
-
-Use this route only if it exists in the final router. Otherwise, the session is closed internally by the agent or service layer.
 
 ---
 
-## 5. LiveKit Routes
+## 6. LiveKit
 
-### Generate a LiveKit token
+### Generate a participant token
 
 ```http
 GET /livekit/token/:sessionId
 ```
 
-The same `sessionId` is used as:
-
-- LiveKit room name
-- Participant identity
-- Redis session key
-- Agent session ID
-- Cart polling session ID
+The route creates a short-lived token for the LiveKit room associated with the session.
 
 Example response:
 
@@ -157,13 +177,13 @@ Example response:
   "success": true,
   "data": {
     "token": "livekit-participant-token",
-    "url": "wss://your-project.livekit.cloud",
+    "url": "wss://voice-agent-poc-vx5xjz20.livekit.cloud",
     "room": "cbcdec12-ec54-4fa0-8725-1d52c86d285a"
   }
 }
 ```
 
-The frontend connects using:
+The frontend connects with the returned URL and token:
 
 ```ts
 await room.connect(url, token);
@@ -171,18 +191,12 @@ await room.connect(url, token);
 
 ---
 
-## 6. Restaurant Routes
+## 7. Restaurant
 
 ### Get restaurant details
 
 ```http
 GET /restaurants
-```
-
-or, depending on the final router:
-
-```http
-GET /restaurant
 ```
 
 Example response:
@@ -201,13 +215,13 @@ Example response:
 }
 ```
 
-### Check restaurant availability
-
-Restaurant availability is normally validated internally by the order service before order placement.
+Restaurant-open validation is also performed internally before order placement.
 
 ---
 
-## 7. Menu Routes
+## 8. Menu
+
+Menu documents are stored in MongoDB. Only available menu items are offered by the voice agent.
 
 ### Get all menu items
 
@@ -223,10 +237,21 @@ Example response:
   "data": [
     {
       "_id": "menu-object-id",
+      "restaurantId": "restaurant-object-id",
       "name": "Margherita Pizza",
-      "description": "Classic pizza",
-      "basePrice": 399,
+      "description": "Classic cheese pizza",
+      "basePrice": 299,
       "category": "Pizza",
+      "available": true,
+      "modifierGroups": []
+    },
+    {
+      "_id": "menu-object-id",
+      "restaurantId": "restaurant-object-id",
+      "name": "Chicken Combo",
+      "description": "Chicken entree with a side",
+      "basePrice": 399,
+      "category": "Combo",
       "available": true,
       "modifierGroups": []
     }
@@ -234,15 +259,7 @@ Example response:
 }
 ```
 
-### Get available menu items
-
-```http
-GET /menu/available
-```
-
-Use this route if it exists in the final router.
-
-### Search menu
+### Search the menu
 
 ```http
 GET /menu/search?query=chicken
@@ -265,13 +282,15 @@ Example response:
 }
 ```
 
-### Get menu item by ID
+Search uses menu fields such as name, description, and keywords.
+
+### Get one menu item
 
 ```http
 GET /menu/:menuId
 ```
 
-Example response:
+Example response showing nested modifiers:
 
 ```json
 {
@@ -280,6 +299,7 @@ Example response:
     "_id": "menu-object-id",
     "name": "Chicken Combo",
     "basePrice": 399,
+    "category": "Combo",
     "available": true,
     "modifierGroups": [
       {
@@ -290,14 +310,65 @@ Example response:
         "maxSelection": 1,
         "options": [
           {
+            "_id": "modifier-object-id",
             "name": "Burger",
             "price": 0,
-            "available": true
+            "available": true,
+            "modifierGroups": [
+              {
+                "name": "Patty",
+                "required": true,
+                "multiple": false,
+                "minSelection": 1,
+                "maxSelection": 1,
+                "options": [
+                  {
+                    "_id": "modifier-object-id",
+                    "name": "Grilled Chicken",
+                    "price": 0,
+                    "available": true,
+                    "modifierGroups": []
+                  },
+                  {
+                    "_id": "modifier-object-id",
+                    "name": "Crispy Chicken",
+                    "price": 30,
+                    "available": true,
+                    "modifierGroups": []
+                  }
+                ]
+              }
+            ]
           },
           {
+            "_id": "modifier-object-id",
             "name": "Wrap",
             "price": 0,
-            "available": true
+            "available": true,
+            "modifierGroups": []
+          }
+        ]
+      },
+      {
+        "name": "Side",
+        "required": true,
+        "multiple": false,
+        "minSelection": 1,
+        "maxSelection": 1,
+        "options": [
+          {
+            "_id": "modifier-object-id",
+            "name": "Fries",
+            "price": 0,
+            "available": true,
+            "modifierGroups": []
+          },
+          {
+            "_id": "modifier-object-id",
+            "name": "Salad",
+            "price": 20,
+            "available": true,
+            "modifierGroups": []
           }
         ]
       }
@@ -306,56 +377,15 @@ Example response:
 }
 ```
 
-### Create a menu item
-
-```http
-POST /menu
-```
-
-Example request:
-
-```json
-{
-  "restaurantId": "restaurant-object-id",
-  "name": "Veg Burger",
-  "description": "Grilled vegetable burger",
-  "basePrice": 249,
-  "category": "Burger",
-  "available": true,
-  "modifierGroups": []
-}
-```
-
-### Update a menu item
-
-```http
-PATCH /menu/:menuId
-```
-
-Example request:
-
-```json
-{
-  "basePrice": 279,
-  "available": true
-}
-```
-
-### Delete a menu item
-
-```http
-DELETE /menu/:menuId
-```
-
-Only document these create, update, and delete routes if they are present in the final router.
+A nested modifier group applies only when its parent option is selected. For example, the `Patty` group applies to `Burger`, not to `Wrap`.
 
 ---
 
-## 8. Cart Routes
+## 9. Cart
 
-The cart is stored in Redis and is scoped by `sessionId`.
+The cart is stored in Redis and scoped by `sessionId`.
 
-### Get cart
+### Get the cart
 
 ```http
 GET /cart/:sessionId
@@ -384,23 +414,30 @@ Example response:
           },
           {
             "modifierOptionId": "modifier-object-id",
-            "groupName": "Side",
-            "optionName": "Fries",
-            "name": "Fries",
+            "groupName": "Patty",
+            "optionName": "Grilled Chicken",
+            "name": "Grilled Chicken",
             "price": 0
+          },
+          {
+            "modifierOptionId": "modifier-object-id",
+            "groupName": "Side",
+            "optionName": "Salad",
+            "name": "Salad",
+            "price": 20
           }
         ],
-        "totalPrice": 399
+        "totalPrice": 419
       }
     ],
-    "subtotal": 399,
-    "tax": 19.95,
-    "total": 418.95
+    "subtotal": 419,
+    "tax": 20.95,
+    "total": 439.95
   }
 }
 ```
 
-### Add item to cart
+### Add an item
 
 ```http
 POST /cart/:sessionId/items
@@ -418,29 +455,35 @@ Example request:
       "name": "Burger"
     },
     {
+      "groupName": "Patty",
+      "name": "Grilled Chicken"
+    },
+    {
       "groupName": "Side",
-      "name": "Fries"
+      "name": "Salad"
     }
   ]
 }
 ```
 
-Validation includes:
+The service validates:
 
-- Menu item exists
-- Menu item is available
+- The menu item exists
+- The menu item is available
 - Quantity is a positive integer
-- Required modifier groups are selected
-- Modifier names are valid
-- Modifier selection limits are respected
+- Required top-level modifiers are selected
+- Required nested modifiers are selected only for selected parent options
+- Group and option names are valid
+- Minimum and maximum selection rules are respected
+- Prices are loaded from the menu document rather than trusted from the client
 
-### Remove item from cart
+### Remove an item
 
 ```http
 DELETE /cart/:sessionId/items/:cartItemId
 ```
 
-### Clear cart
+### Clear the cart
 
 ```http
 DELETE /cart/:sessionId
@@ -462,7 +505,7 @@ Example response:
 
 ---
 
-## 9. Order Routes
+## 10. Orders
 
 Orders are persisted in MongoDB.
 
@@ -488,19 +531,19 @@ Example response:
   "data": {
     "_id": "order-object-id",
     "sessionId": "cbcdec12-ec54-4fa0-8725-1d52c86d285a",
-    "orderNumber": "ORD-1784722164877-990F48",
+    "orderNumber": "ORD-1784804519497-3FE8F8",
     "orderStatus": "confirmed",
-    "subtotal": 399,
-    "tax": 19.95,
-    "total": 418.95
+    "subtotal": 419,
+    "tax": 20.95,
+    "total": 439.95
   }
 }
 ```
 
-After successful order placement:
+After successful placement:
 
 - The order is saved in MongoDB
-- Analytics are updated
+- The analytics record is linked to the order
 - The Redis cart is cleared
 - The session state becomes `order_placed`
 
@@ -510,7 +553,7 @@ After successful order placement:
 GET /orders
 ```
 
-### Get order by ID
+### Get one order
 
 ```http
 GET /orders/:orderId
@@ -530,29 +573,33 @@ Example request:
 }
 ```
 
-Supported values may include:
-
-```text
-pending
-confirmed
-preparing
-completed
-cancelled
-```
+Supported order states are defined by the Order model. The confirmed ordering flow creates an order with a confirmed status.
 
 ---
 
-## 10. Analytics Routes
+## 11. Analytics
 
-Analytics are stored per session.
+Analytics are stored per voice session.
 
-### Start analytics session
+Tracked values include:
+
+- Call duration
+- User and assistant turns
+- Prompt, completion, and total tokens
+- Cart updates
+- Tool calls and tool latency
+- LLM usage events
+- First-response and average latency
+- Errors
+- Order placement
+
+### Start analytics
 
 ```http
 POST /analytics/:sessionId/start
 ```
 
-### Record transcript turn
+### Record a turn
 
 ```http
 POST /analytics/:sessionId/turn
@@ -566,14 +613,14 @@ Example request:
 }
 ```
 
-Supported roles:
+Valid roles:
 
 ```text
 user
 assistant
 ```
 
-### End analytics session
+### End analytics
 
 ```http
 POST /analytics/:sessionId/end
@@ -587,15 +634,7 @@ Example request:
 }
 ```
 
-Supported values may include:
-
-```text
-active
-completed
-failed
-```
-
-### Get analytics summary
+### Get summary
 
 ```http
 GET /analytics/summary
@@ -629,10 +668,62 @@ Example response:
 GET /analytics
 ```
 
-### Get analytics by session ID
+### Get analytics by session
 
 ```http
 GET /analytics/:sessionId
 ```
 
 ---
+
+## 12. Call Logs
+
+Call logs persist the voice-session timeline and transcript-related information used by the frontend.
+
+### Get all call logs
+
+```http
+GET /call-logs
+```
+
+### Get a call log by session
+
+```http
+GET /call-logs/:sessionId
+```
+
+A call log may include:
+
+- Session ID
+- Restaurant ID
+- Associated order ID
+- Call status
+- Transcript entries
+- Start and end timestamps
+- Duration
+
+---
+
+## 13. Session and Order Flow
+
+```mermaid
+flowchart LR
+    A[POST /sessions] --> B[GET /livekit/token/:sessionId]
+    B --> C[Join LiveKit room]
+    C --> D[Agent uses menu and cart tools]
+    D --> E[Frontend polls GET /cart/:sessionId]
+    E --> F[Customer explicitly confirms]
+    F --> G[POST /orders/:sessionId]
+    G --> H[Order saved]
+    H --> I[Cart cleared]
+    H --> J[Analytics linked]
+```
+
+---
+
+## 14. Security Notes
+
+- Never expose MongoDB, Redis, LiveKit secret, Groq, or Deepgram credentials to the frontend.
+- The frontend may receive a short-lived LiveKit participant token.
+- Do not commit `.env` or `secrets.env`.
+- Rotate any credential that was committed or shared publicly.

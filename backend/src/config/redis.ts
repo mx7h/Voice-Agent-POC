@@ -56,7 +56,7 @@ export const connectRedis = async () => {
         console.log("[REDIS] Connected");
     } catch (err) {
         console.error("[REDIS] Initial connection failed:", err);
-
+        throw err;
         // Do not kill Render service.
         // Render should stay alive, and Redis can reconnect later.
     }
