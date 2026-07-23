@@ -55,6 +55,54 @@ export class AnalyticsService {
       },
     );
   }
+  async recordTranscript(
+    sessionId: string,
+    role: TurnRole,
+    text: string,
+  ) {
+    const cleanText = String(text ?? "").trim();
+
+    if (!cleanText) {
+      return Analytics.findOneAndUpdate(
+        { sessionId },
+        {
+          $set: {
+            lastEventAt: new Date(),
+          },
+        },
+        {
+          upsert: true,
+          returnDocument: "after",
+        },
+      );
+    }
+
+    return Analytics.findOneAndUpdate(
+      { sessionId },
+      {
+        $push: {
+          timelineEvents: {
+            type: "transcript",
+            role,
+            text: cleanText,
+            createdAt: new Date(),
+          },
+        },
+        $inc: {
+          totalTurns: 1,
+          ...(role === "user" ? { userTurns: 1 } : {}),
+          ...(role === "assistant" ? { assistantTurns: 1 } : {}),
+        },
+        $set: {
+          lastEventAt: new Date(),
+        },
+      },
+      {
+        upsert: true,
+        returnDocument: "after",
+      },
+    );
+  }
 
   /**
    * Backend tool latency analytics.
@@ -74,6 +122,14 @@ export class AnalyticsService {
         },
         $push: {
           toolEvents: {
+            toolName,
+            latencyMs,
+            success,
+            createdAt: new Date(),
+          },
+
+          timelineEvents: {
+            type: "tool",
             toolName,
             latencyMs,
             success,
@@ -122,6 +178,18 @@ export class AnalyticsService {
           orderId: new Types.ObjectId(orderId),
           status: "completed",
           lastEventAt: new Date(),
+        },
+        $push: {
+          timelineEvents: {
+            type: "order",
+            text: "Order placed successfully.",
+            toolName: "placeOrder",
+            toolOutput: {
+              orderId,
+            },
+            success: true,
+            createdAt: new Date(),
+          },
         },
       },
       {
@@ -236,6 +304,13 @@ export class AnalyticsService {
         $push: {
           errors: {
             message,
+            createdAt: new Date(),
+          },
+
+          timelineEvents: {
+            type: "error",
+            text: message,
+            success: false,
             createdAt: new Date(),
           },
         },
@@ -422,7 +497,38 @@ export class AnalyticsService {
       }
     );
   }
-
+  async recordTimelineEvent(
+    sessionId: string,
+    event: {
+      type: "transcript" | "tool" | "order" | "error";
+      role?: "user" | "assistant" | null;
+      text?: string;
+      toolName?: string;
+      toolInput?: unknown;
+      toolOutput?: unknown;
+      latencyMs?: number;
+      success?: boolean;
+    },
+  ) {
+    return Analytics.findOneAndUpdate(
+      { sessionId },
+      {
+        $push: {
+          timelineEvents: {
+            ...event,
+            createdAt: new Date(),
+          },
+        },
+        $set: {
+          lastEventAt: new Date(),
+        },
+      },
+      {
+        upsert: true,
+        returnDocument: "after",
+      },
+    );
+  }
   /**
    * Average backend tool latency.
    */

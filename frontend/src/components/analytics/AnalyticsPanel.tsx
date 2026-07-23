@@ -12,9 +12,30 @@ import {
   Wrench,
   Zap,
   Cpu,
+  User,
+  Bot,
+  Terminal,
+  ChevronDown,
 } from "lucide-react";
 
 import { analyticsApi, type AnalyticsSession, type AnalyticsSummary } from "@/api/analytics.api";
+
+type TimelineEvent = {
+  _id?: string;
+  type: "transcript" | "tool" | "order" | "error";
+  role?: "user" | "assistant" | null;
+  text?: string;
+  toolName?: string;
+  toolInput?: unknown;
+  toolOutput?: unknown;
+  latencyMs?: number;
+  success?: boolean;
+  createdAt?: string;
+};
+
+type AnalyticsSessionWithTimeline = AnalyticsSession & {
+  timelineEvents?: TimelineEvent[];
+};
 
 function formatNumber(value?: number) {
   return Number(value ?? 0).toLocaleString();
@@ -51,6 +72,16 @@ function formatDate(value?: string | null) {
   return new Date(value).toLocaleString([], {
     dateStyle: "medium",
     timeStyle: "short",
+  });
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return "";
+
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
   });
 }
 
@@ -92,10 +123,123 @@ function StatCard({
   );
 }
 
-function SessionCard({ session }: { session: AnalyticsSession }) {
+function TimelineRow({ event }: { event: TimelineEvent }) {
+  if (event.type === "tool") {
+    const success = event.success !== false;
+
+    return (
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
+          <Terminal className="h-3.5 w-3.5 text-muted-foreground" />
+        </div>
+
+        <div className="min-w-0 flex-1 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-mono text-xs font-medium">{event.toolName || "tool"}</span>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-muted-foreground">{formatMs(event.latencyMs)}</span>
+
+              <span
+                className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  success ? "bg-emerald-500/15 text-emerald-600" : "bg-red-500/15 text-red-600"
+                }`}
+              >
+                {success ? "success" : "failed"}
+              </span>
+            </div>
+          </div>
+
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{formatTime(event.createdAt)}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.type === "order") {
+    return (
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+        </div>
+
+        <div className="min-w-0 flex-1 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2">
+          <p className="text-sm font-medium text-emerald-700">
+            {event.text || "Order placed successfully."}
+          </p>
+
+          {event.toolName ? (
+            <p className="mt-1 font-mono text-[11px] text-muted-foreground">{event.toolName}</p>
+          ) : null}
+
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{formatTime(event.createdAt)}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.type === "error") {
+    return (
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-500/15">
+          <AlertCircle className="h-3.5 w-3.5 text-red-600" />
+        </div>
+
+        <div className="min-w-0 flex-1 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2">
+          <p className="text-sm font-medium text-red-700">{event.text || "Error occurred."}</p>
+
+          {event.toolName ? (
+            <p className="mt-1 font-mono text-[11px] text-muted-foreground">{event.toolName}</p>
+          ) : null}
+
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{formatTime(event.createdAt)}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isUser = event.role === "user";
+
+  return (
+    <div className={`flex items-start gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
+      <div
+        className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+          isUser ? "bg-primary/15" : "bg-muted"
+        }`}
+      >
+        {isUser ? (
+          <User className="h-3.5 w-3.5 text-primary" />
+        ) : (
+          <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+        )}
+      </div>
+
+      <div
+        className={`min-w-0 max-w-[85%] rounded-lg px-3 py-2 ${
+          isUser ? "bg-primary/10" : "bg-muted/50"
+        }`}
+      >
+        <div className={`flex items-center gap-2 ${isUser ? "flex-row-reverse" : ""}`}>
+          <span className="text-[11px] font-medium capitalize text-muted-foreground">
+            {event.role ?? "assistant"}
+          </span>
+
+          <span className="text-[11px] text-muted-foreground">{formatTime(event.createdAt)}</span>
+        </div>
+
+        <p className="mt-1 text-sm leading-snug">{event.text || "—"}</p>
+      </div>
+    </div>
+  );
+}
+
+function SessionCard({ session }: { session: AnalyticsSessionWithTimeline }) {
+  const [showTimeline, setShowTimeline] = useState(false);
   const duration = session.durationSeconds ?? session.totalDuration ?? 0;
 
-  const latestTools = session.toolEvents?.slice(-3) ?? [];
+  const timeline = (session.timelineEvents ?? [])
+    .slice()
+    .sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime());
 
   const metrics = [
     ["Turns", formatNumber(session.totalTurns)],
@@ -147,55 +291,32 @@ function SessionCard({ session }: { session: AnalyticsSession }) {
         ))}
       </div>
 
-      {latestTools.length > 0 && (
+      {timeline.length > 0 && (
         <div className="mt-5 border-t border-border pt-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium">Latest tool calls</p>
-              <p className="text-xs text-muted-foreground">
-                Recent backend actions executed by the agent
-              </p>
+          <button
+            type="button"
+            onClick={() => setShowTimeline(!showTimeline)}
+            className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2 hover:bg-muted/50"
+          >
+            <div className="text-left">
+              <p className="text-sm font-medium">Timeline</p>
+              <p className="text-xs text-muted-foreground">{timeline.length} events</p>
             </div>
 
-            <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-              {latestTools.length} shown
-            </span>
-          </div>
+            <ChevronDown
+              className={`h-4 w-4 shrink-0 transition-transform ${
+                showTimeline ? "rotate-180" : ""
+              }`}
+            />
+          </button>
 
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {latestTools.map((tool, index) => {
-              const success = tool.success !== false;
-
-              return (
-                <div
-                  key={`${tool.toolName}-${index}`}
-                  className="rounded-lg border border-border bg-background p-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-mono text-xs font-medium">
-                        {tool.toolName ?? "tool"}
-                      </p>
-
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Latency {formatMs(tool.latencyMs)}
-                      </p>
-                    </div>
-
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                        success
-                          ? "bg-emerald-500/15 text-emerald-600"
-                          : "bg-red-500/15 text-red-600"
-                      }`}
-                    >
-                      {success ? "success" : "failed"}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          {showTimeline && (
+            <div className="mt-3 max-h-96 space-y-3 overflow-y-auto rounded-lg border border-dashed border-border bg-muted/20 p-3 pr-1">
+              {timeline.map((event, index) => (
+                <TimelineRow key={event._id ?? index} event={event} />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -210,7 +331,7 @@ function SessionCard({ session }: { session: AnalyticsSession }) {
 
 export default function AnalyticsPanel() {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
-  const [sessions, setSessions] = useState<AnalyticsSession[]>([]);
+  const [sessions, setSessions] = useState<AnalyticsSessionWithTimeline[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -225,7 +346,7 @@ export default function AnalyticsPanel() {
       ]);
 
       setSummary(summaryData);
-      setSessions(sessionsData);
+      setSessions(sessionsData as AnalyticsSessionWithTimeline[]);
     } catch (err) {
       console.error("[ANALYTICS LOAD ERROR]", err);
 
@@ -279,7 +400,7 @@ export default function AnalyticsPanel() {
         <div>
           <h2 className="text-lg font-semibold">Overview</h2>
           <p className="text-sm text-muted-foreground">
-            Voice session, tool-call, cart, order, token, and LLM latency analytics.
+            Voice session, timeline, tool-call, cart, order, token, and LLM latency analytics.
           </p>
         </div>
 

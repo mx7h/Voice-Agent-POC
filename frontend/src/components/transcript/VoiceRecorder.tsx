@@ -99,14 +99,15 @@ export default function VoiceRecorder() {
     }
   };
 
-  const recordAnalyticsTurn = (role: "user" | "assistant") => {
+  const recordAnalyticsTurn = (role: "user" | "assistant", text: string) => {
     const currentSessionId = sessionIdRef.current;
+    const transcriptText = text.trim();
 
-    if (!currentSessionId) {
+    if (!currentSessionId || !transcriptText) {
       return;
     }
 
-    void analyticsApi.recordTurn(currentSessionId, role).catch((error) => {
+    void analyticsApi.recordTurn(currentSessionId, role, transcriptText).catch((error) => {
       console.warn("[ANALYTICS TURN ERROR]", error);
     });
   };
@@ -126,7 +127,7 @@ export default function VoiceRecorder() {
       }),
     );
 
-    recordAnalyticsTurn(role);
+    recordAnalyticsTurn(role, transcriptText);
   };
 
   const removeRemoteAudioElements = () => {
@@ -481,11 +482,10 @@ export default function VoiceRecorder() {
       });
     } catch (error) {
       console.error("LiveKit stream start error:", error);
-      
-      await cleanupLiveKit("failed");
-      
-      dispatch(setSessionError(error instanceof Error ? error.message : "Session failed"));
 
+      await cleanupLiveKit("failed");
+
+      dispatch(setSessionError(error instanceof Error ? error.message : "Session failed"));
 
       const message =
         error instanceof Error ? error.message : "Microphone or connection access denied";

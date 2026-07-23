@@ -171,7 +171,57 @@ const analyticsSchema = new Schema(
         },
       },
     ],
+    
+    timelineEvents: [
+      {
+        type: {
+          type: String,
+          enum: ["transcript", "tool", "order", "error"],
+          required: true,
+        },
 
+        role: {
+          type: String,
+          enum: ["user", "assistant", null],
+          default: null,
+        },
+
+        text: {
+          type: String,
+          default: "",
+        },
+
+        toolName: {
+          type: String,
+          default: "",
+        },
+
+        toolInput: {
+          type: Schema.Types.Mixed,
+          default: null,
+        },
+
+        toolOutput: {
+          type: Schema.Types.Mixed,
+          default: null,
+        },
+
+        latencyMs: {
+          type: Number,
+          default: 0,
+        },
+
+        success: {
+          type: Boolean,
+          default: true,
+        },
+
+        createdAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
 
 
     errors: [

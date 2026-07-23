@@ -69,7 +69,18 @@ export type AnalyticsSession = {
     createdAt?: string;
   }[];
 
-
+  timelineEvents?: {
+    _id?: string;
+    type: "transcript" | "tool" | "order" | "error";
+    role?: "user" | "assistant" | null;
+    text?: string;
+    toolName?: string;
+    toolInput?: unknown;
+    toolOutput?: unknown;
+    latencyMs?: number;
+    success?: boolean;
+    createdAt?: string;
+  }[];
 
   errors?: {
     message?: string;
@@ -104,9 +115,11 @@ export const analyticsApi = {
   recordTurn: async (
     sessionId: string,
     role: "user" | "assistant",
+    text?: string,
   ) => {
     const { data } = await api.post(`/analytics/${sessionId}/turn`, {
       role,
+      text,
     });
 
     return unwrap(data);

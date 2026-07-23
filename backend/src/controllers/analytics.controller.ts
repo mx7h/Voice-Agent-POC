@@ -22,7 +22,7 @@ export const recordTurnController = async (
   res: Response,
 ) => {
   const { sessionId } = req.params;
-  const { role } = req.body;
+  const { role, text } = req.body;
 
   if (role !== "user" && role !== "assistant") {
     return res.status(StatusCodes.BAD_REQUEST).json({
@@ -31,7 +31,15 @@ export const recordTurnController = async (
     });
   }
 
-  const analytics = await analyticsService.recordTurn(sessionId as string, role);
+  const cleanText = String(text ?? "").trim();
+
+  const analytics = cleanText
+    ? await analyticsService.recordTranscript(
+      sessionId as string,
+      role,
+      cleanText,
+    )
+    : await analyticsService.recordTurn(sessionId as string, role);
 
   res.status(StatusCodes.OK).json({
     success: true,

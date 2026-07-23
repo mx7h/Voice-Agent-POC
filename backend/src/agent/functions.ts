@@ -168,19 +168,9 @@ export class AgentFunctions {
 
             const requestedModifiers = input.selectedModifiers ?? [];
 
-            const missingRequiredGroups = (menuItem.modifierGroups ?? []).filter(
-                (group: any) => {
-                    if (group.required !== true) return false;
-
-                    const selectionsForGroup = requestedModifiers.filter(
-                        (modifier) =>
-                            this.normalize(modifier.groupName) === this.normalize(group.name),
-                    );
-
-                    const minSelection = Number(group.minSelection ?? 1);
-
-                    return selectionsForGroup.length < minSelection;
-                },
+            const missingRequiredGroups = this.collectMissingRequiredGroups(
+                menuItem.modifierGroups ?? [],
+                requestedModifiers,
             );
 
             if (missingRequiredGroups.length > 0) {
@@ -190,57 +180,16 @@ export class AgentFunctions {
                         "Ask the customer to select the required options before adding this item.",
                     data: {
                         requiresCustomerInput: true,
-                        missingModifierGroups: missingRequiredGroups.map((group: any) => ({
-                            groupName: String(group.name),
-                            required: true,
-                            multiple: Boolean(group.multiple),
-                            minSelection: Number(group.minSelection ?? 1),
-                            maxSelection: Number(group.maxSelection ?? 1),
-                            choices: (group.options ?? [])
-                                .filter((option: any) => option.available !== false)
-                                .map((option: any) => ({
-                                    name: String(option.name),
-                                    additionalPrice: Number(option.price ?? 0),
-                                })),
-                        })),
+                        missingModifierGroups: missingRequiredGroups,
                     },
                 };
             }
 
-            const resolvedModifiers = requestedModifiers.map((selectedModifier) => {
-                const modifierGroup = menuItem.modifierGroups?.find(
-                    (group: any) =>
-                        this.normalize(group.name) ===
-                        this.normalize(selectedModifier.groupName),
-                );
-
-                if (!modifierGroup) {
-                    throw new Error(
-                        `Modifier group "${selectedModifier.groupName}" is not available for ${menuItem.name}.`,
-                    );
-                }
-
-                const modifierOption = modifierGroup.options?.find(
-                    (option: any) =>
-                        option.available !== false &&
-                        this.normalize(option.name) === this.normalize(selectedModifier.name),
-                );
-
-                if (!modifierOption) {
-                    throw new Error(
-                        `"${selectedModifier.name}" is not a valid option for ${modifierGroup.name}.`,
-                    );
-                }
-
-                return {
-                    modifierOptionId: String(modifierOption._id ?? new Types.ObjectId()),
-                    groupName: String(modifierGroup.name),
-                    optionName: String(modifierOption.name),
-                    name: String(modifierOption.name),
-                    price: Number(modifierOption.price ?? 0),
-                };
-            });
-
+            const resolvedModifiers = this.resolveSelectedModifiers(
+                menuItem.modifierGroups ?? [],
+                requestedModifiers,
+                menuItem.name,
+            );
             const cart = await cartService.addToCart(
                 this.sessionId,
                 input.menuId,
@@ -250,20 +199,10 @@ export class AgentFunctions {
 
             return {
                 success: true,
-                message: `${quantity} ${menuItem.name} added to the cart.`,
+                message: `${quantity} ${menuItem.name} added to cart.`,
                 data: {
-                    addedItem: {
-                        name: menuItem.name,
-                        quantity,
-                        modifiers: resolvedModifiers.map((modifier) => ({
-                            groupName: modifier.groupName,
-                            name: modifier.name,
-                            optionName: modifier.optionName,
-                            modifierOptionId: modifier.modifierOptionId,
-                            price: modifier.price,
-                        })),
-                    },
-                    cart: this.formatCart(cart),
+                    item: menuItem.name,
+                    total: this.formatMoney(cart.total),
                 },
             };
         });
@@ -370,55 +309,223 @@ export class AgentFunctions {
     private formatMenuSummary(item: any) {
         return {
             id: String(item._id),
-            name: String(item.name),
-            category: String(item.category),
+            n: String(item.name),
+            cat: String(item.category),
             price: this.formatMoney(item.basePrice),
-            available: item.available === true,
-        };
-    }
-    private formatMoney(value: unknown) {
-        return Number((Number(value ?? 0)));
-    }
-    private formatMenuItem(item: any) {
-        return {
-            id: String(item._id),
-            name: String(item.name),
-            description: String(item.description ?? ""),
-            category: String(item.category),
-            price: this.formatMoney(item.basePrice),
-            available: item.available === true,
-            hasRequiredModifiers: (item.modifierGroups ?? []).some(
-                (group: any) => group.required === true,
-            ),
-            modifierGroups: (item.modifierGroups ?? []).map((group: any) => ({
-                groupName: String(group.name),
-                required: group.required === true,
-                multiple: group.multiple === true,
-                minSelection: Number(group.minSelection ?? (group.required ? 1 : 0)),
-                maxSelection: Number(group.maxSelection ?? 1),
-                choices: (group.options ?? [])
-                    .filter((option: any) => option.available !== false)
-                    .map((option: any) => ({
-                        name: String(option.name),
-                        additionalPrice: Number(option.price ?? 0),
-                    })),
-            })),
         };
     }
 
+    private formatMoney(value: unknown) {
+        return Number((Number(value ?? 0)));
+    }
+
+    private formatMenuItem(item: any) {
+        return {
+            id: String(item._id),
+            n: String(item.name),
+            desc: String(item.description ?? ""),
+            cat: String(item.category),
+            price: this.formatMoney(item.basePrice),
+            available: item.available === true,
+            hasReqMods: this.hasRequiredModifierGroups(item.modifierGroups ?? []),
+            mods: this.formatModifierGroupsCompact(item.modifierGroups ?? []),
+        };
+    }
+
+    private formatModifierGroupsCompact(groups: any[] = []): any[] {
+        return groups.map((group: any) => ({
+            g: String(group.name),
+            req: group.required === true,
+            multi: group.multiple === true,
+            min: Number(group.minSelection ?? (group.required ? 1 : 0)),
+            max: Number(group.maxSelection ?? 1),
+            opts: (group.options ?? [])
+                .filter((option: any) => option.available !== false)
+                .map((option: any) => {
+                    const nestedGroups = this.formatModifierGroupsCompact(
+                        option.modifierGroups ?? [],
+                    );
+
+                    return {
+                        n: String(option.name),
+                        p: Number(option.price ?? 0),
+                        mods: nestedGroups,
+                        nestedRule:
+                            nestedGroups.length > 0
+                                ? `Ask nested mods only if ${option.name} is selected.`
+                                : `No nested mods for ${option.name}.`,
+                    };
+                }),
+        }));
+    }
+
+    private hasRequiredModifierGroups(groups: any[] = []): boolean {
+        return groups.some((group: any) => {
+            if (group.required === true) return true;
+
+            return (group.options ?? []).some((option: any) =>
+                this.hasRequiredModifierGroups(option.modifierGroups ?? []),
+            );
+        });
+    }
+    private collectMissingRequiredGroups(
+        groups: any[] = [],
+        requestedModifiers: SelectedModifier[] = [],
+    ): any[] {
+        const missingGroups: any[] = [];
+
+        for (const group of groups) {
+            const selectionsForGroup = requestedModifiers.filter(
+                (modifier) =>
+                    this.normalize(modifier.groupName) === this.normalize(group.name),
+            );
+
+            const minSelection = Number(group.minSelection ?? (group.required ? 1 : 0));
+
+            if (group.required === true && selectionsForGroup.length < minSelection) {
+                missingGroups.push(this.formatMissingModifierGroup(group));
+                continue;
+            }
+
+            for (const selectedModifier of selectionsForGroup) {
+                const selectedOption = (group.options ?? []).find(
+                    (option: any) =>
+                        option.available !== false &&
+                        this.normalize(option.name) ===
+                        this.normalize(selectedModifier.name ?? selectedModifier.optionName),
+                );
+
+                if (!selectedOption) continue;
+
+                const nestedMissingGroups = this.collectMissingRequiredGroups(
+                    selectedOption.modifierGroups ?? [],
+                    requestedModifiers,
+                );
+
+                missingGroups.push(...nestedMissingGroups);
+            }
+        }
+
+        return missingGroups;
+    }
+
+    private formatMissingModifierGroup(group: any) {
+        return {
+            g: String(group.name),
+            req: group.required === true,
+            multi: group.multiple === true,
+            min: Number(group.minSelection ?? (group.required ? 1 : 0)),
+            max: Number(group.maxSelection ?? 1),
+            opts: (group.options ?? [])
+                .filter((option: any) => option.available !== false)
+                .map((option: any) => ({
+                    n: String(option.name),
+                    p: Number(option.price ?? 0),
+                    mods: this.formatModifierGroupsCompact(
+                        option.modifierGroups ?? [],
+                    ),
+                })),
+        };
+    }
+
+    private resolveSelectedModifiers(
+        groups: any[] = [],
+        requestedModifiers: SelectedModifier[] = [],
+        itemName: string,
+    ) {
+        const resolvedModifiers: SelectedModifier[] = [];
+        const resolvedKeys = new Set<string>();
+
+        const visitGroups = (currentGroups: any[]) => {
+            for (const group of currentGroups ?? []) {
+                const selectionsForGroup = requestedModifiers.filter(
+                    (modifier) =>
+                        this.normalize(modifier.groupName) ===
+                        this.normalize(group.name),
+                );
+
+                const maxSelection = Number(
+                    group.maxSelection ?? (group.multiple ? selectionsForGroup.length : 1),
+                );
+
+                if (selectionsForGroup.length > maxSelection) {
+                    throw new Error(
+                        `Too many options selected for ${group.name}. Maximum allowed is ${maxSelection}.`,
+                    );
+                }
+
+                for (const selectedModifier of selectionsForGroup) {
+                    const selectedName = String(
+                        selectedModifier.name ?? selectedModifier.optionName ?? "",
+                    );
+
+                    const modifierOption = (group.options ?? []).find(
+                        (option: any) =>
+                            option.available !== false &&
+                            this.normalize(option.name) === this.normalize(selectedName),
+                    );
+
+                    if (!modifierOption) {
+                        throw new Error(
+                            `"${selectedName}" is not a valid option for ${group.name}.`,
+                        );
+                    }
+
+                    const resolved = {
+                        modifierOptionId: String(
+                            modifierOption._id ?? new Types.ObjectId(),
+                        ),
+                        groupName: String(group.name),
+                        optionName: String(modifierOption.name),
+                        name: String(modifierOption.name),
+                        price: Number(modifierOption.price ?? 0),
+                    };
+
+                    resolvedModifiers.push(resolved);
+
+                    resolvedKeys.add(
+                        `${this.normalize(resolved.groupName)}::${this.normalize(
+                            resolved.name,
+                        )}`,
+                    );
+
+                    visitGroups(modifierOption.modifierGroups ?? []);
+                }
+            }
+        };
+
+        visitGroups(groups);
+
+        for (const requestedModifier of requestedModifiers) {
+            const requestedName = String(
+                requestedModifier.name ?? requestedModifier.optionName ?? "",
+            );
+
+            const key = `${this.normalize(requestedModifier.groupName)}::${this.normalize(
+                requestedName,
+            )}`;
+
+            if (!resolvedKeys.has(key)) {
+                throw new Error(
+                    `Modifier group "${requestedModifier.groupName}" with option "${requestedName}" is not available for ${itemName}.`,
+                );
+            }
+        }
+
+        return resolvedModifiers;
+    }
     private formatCart(cart: any) {
         return {
             items: (cart.items ?? []).map((item: any) => ({
-                cartItemId: String(item.cartItemId),
-                name: String(item.itemName),
-                quantity: Number(item.quantity),
-                modifiers: (item.selectedModifiers ?? []).map((modifier: any) => ({
-                    groupName: String(modifier.groupName),
-                    name: String(modifier.name ?? modifier.optionName),
-                    optionName: String(modifier.optionName ?? modifier.name),
-                    price: this.formatMoney(modifier.price ?? 0),
+                id: String(item.cartItemId),
+                n: String(item.itemName),
+                qty: Number(item.quantity),
+                mods: (item.selectedModifiers ?? []).map((modifier: any) => ({
+                    g: String(modifier.groupName),
+                    n: String(modifier.name ?? modifier.optionName),
+                    p: this.formatMoney(modifier.price ?? 0),
                 })),
-                totalPrice: this.formatMoney(item.totalPrice),
+                total: this.formatMoney(item.totalPrice),
             })),
             subtotal: this.formatMoney(cart.subtotal ?? 0),
             tax: this.formatMoney(cart.tax ?? 0),
